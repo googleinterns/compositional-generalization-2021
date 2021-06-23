@@ -2,7 +2,7 @@
 
 # Compositional Generalization via Iterative Decoding
 
-Repository for the Google summe 2021 internship project on compositional generalization experiments using iterative decoding.
+Repository for the Google summer 2021 internship project on compositional generalization experiments using iterative decoding.
 
 ## Source Code Headers
 
