@@ -25,19 +25,15 @@ def get_config():
   config.vocab_path = None
 
   # Vocabulary size if `vocab_path` is not given.
-  config.vocab_size = 32_000
-
+  config.vocab_size = 534
   config.max_corpus_chars = 10**7
 
-  # Name of TFDS translation dataset to use.
-  config.dataset_name = "wmt17_translate/de-en"
+  # Name of TFDS PCFG dataset to use.
+  config.dataset_name = "pcfg_full_data_original"
 
-  # Optional name of TFDS translation dataset to use for evaluation.
-  config.eval_dataset_name = "wmt14_translate/de-en"
+  # Optional name of TFDS PCFG dataset to use for evaluation.
+  config.eval_dataset_name = False
   config.eval_split = "test"
-
-  # Reverse the direction of translation.
-  config.reverse_translation = False
 
   # Per device batch size for training.
   config.per_device_batch_size = 64
@@ -45,19 +41,24 @@ def get_config():
   # Beam size for inference.
   config.beam_size = 4
 
-  config.num_train_steps = 100_000
+  config.num_train_steps = 15_000
 
   # Number of steps to take during evaluation.
   config.num_eval_steps = 20
-  # Number of steps to generate predictions (used for BLEU score).
+  # Number of steps to generate predictions.
   # -1 will use the whole eval dataset.
-  config.num_predict_steps = -1
+  config.num_predict_steps = 10
+  # Number of steps to take during evaluation of training set
+  config.num_eval_train_steps = 20
+  # Number of steps to generate predictions on the training set.
+  # -1 will use the whole eval dataset.
+  config.num_predict_steps_train = 10
 
   # Base learning rate.
   config.learning_rate = 0.0625
 
   # Linear learning rate warmup.
-  config.warmup_steps = 1000
+  config.warmup_steps = 4000
 
   # Cross entropy loss label smoothing.
   config.label_smoothing = 0.1
@@ -71,7 +72,6 @@ def get_config():
   config.max_eval_target_length = 256
   # Maximum length cutoff for predicted tokens.
   config.max_predict_length = 256
-
   # Inputs and targets share embedding.
   config.share_embeddings = True
 
@@ -82,14 +82,14 @@ def get_config():
   config.num_layers = 6
 
   # Size of query/key/value for attention.
-  config.qkv_dim = 1024
+  config.qkv_dim = 64
   # Size of embeddings.
-  config.emb_dim = 1024
+  config.emb_dim = 64
   # Size of the MLP.
-  config.mlp_dim = 4096
+  config.mlp_dim = 256
 
   # Number of attention heads.
-  config.num_heads = 16
+  config.num_heads = 4
 
   # Dropout rate.
   config.dropout_rate = 0.1
@@ -103,9 +103,9 @@ def get_config():
   config.restore_checkpoints = True
 
   # Save a checkpoint every these number of steps.
-  config.checkpoint_every_steps = 10_000
+  config.checkpoint_every_steps = 5_000
   # Frequency of eval during training, e.g. every 1000 steps.
-  config.eval_every_steps = 1_000
+  config.eval_every_steps = 1_500
 
   # Use bfloat16 mixed precision training instead of float32.
   config.use_bfloat16 = True
