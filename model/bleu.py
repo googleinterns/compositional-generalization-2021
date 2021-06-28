@@ -112,6 +112,13 @@ def _get_ngrams(segment, max_order):
       ngram_counts[ngram] += 1
   return ngram_counts
 
+def compute_complete_matches(reference_corpus, translation_corpus):
+    nb_sentences = len(reference_corpus)
+    complete_matches = 0
+    for (references, translations) in zip(reference_corpus, translation_corpus):
+        if references == translations:
+            complete_matches +=1
+    return (np.array(complete_matches), np.array(nb_sentences))
 
 def compute_bleu_matches(reference_corpus,
                  translation_corpus,

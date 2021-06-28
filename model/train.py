@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Machine Translation example.
+"""PCFG example.
 
-This script trains a Transformer on a WMT dataset.
+This script trains a Transformer on a PCFG dataset.
 """
 
 # pytype: disable=wrong-arg-count
@@ -161,21 +161,47 @@ def compute_weighted_accuracy(logits, targets, weights=None):
     normalizing_factor = weights.sum()
 
   return loss.sum(), normalizing_factor
+  
+  
+def compute_sentence_accuracy(logits, targets, weights=None):
+  """Compute sentence accuracy for log probs and targets.
+
+  Args:
+   logits: [batch, length, num_classes] float array.
+   targets: categorical targets [batch, length] int array.
+   weights: None or array of shape [batch, length]
+
+  Returns:
+    Tuple of scalar loss and batch normalizing factor.
+  """
+  if logits.ndim != targets.ndim + 1:
+    raise ValueError("Incorrect shapes. Got shape %s logits and %s targets" %
+                     (str(logits.shape), str(targets.shape)))
+  boolean_array = jnp.equal(jnp.argmax(logits, axis=-1), targets)
+  normalizing_factor = logits.shape[0]
+  if weights is not None:
+    boolean_array = jnp.equal(weights * jnp.argmax(logits, axis=-1), weights * targets)
+    normalizing_factor = jnp.sum(jnp.sum(weights, axis=-1)>0)
+  loss = jnp.alltrue(boolean_array, axis=-1).astype(jnp.float32)
+  
+  return loss.sum(), normalizing_factor
 
 
-def compute_metrics(logits, labels, weights, label_smoothing=0.0):
+def compute_all_metrics(logits, labels, weights, label_smoothing=0.0):
   """Compute summary metrics."""
   loss, weight_sum = compute_weighted_cross_entropy(logits, labels, weights,
                                                     label_smoothing)
-  acc, _ = compute_weighted_accuracy(logits, labels, weights)
+  acc, _ = compute_weighted_accuracy(logits, labels, weights.astype(jnp.float32))
+  sentence_acc, sentence_denominator = compute_sentence_accuracy(logits, labels, weights)
   metrics = {
       "loss": loss,
       "accuracy": acc,
       "denominator": weight_sum,
+      "sentence_accuracy": sentence_acc,
+      "sentence_denominator": sentence_denominator,
   }
   metrics = jax.lax.psum(metrics, axis_name="batch")
   return metrics
-
 
 # Primary training / eval / decode step functions.
 # -----------------------------------------------------------------------------
@@ -200,7 +226,7 @@ def train_step(optimizer,
   (inputs, targets, inputs_positions, targets_positions, inputs_segmentation,
    targets_segmentation) = [batch.get(k, None) for k in train_keys]
 
-  weights = jnp.where(targets > 0, 1, 0).astype(jnp.float32)
+  weights = jnp.where(targets > 0, 1, 0)
 
   dropout_rng = jax.random.fold_in(dropout_rng, optimizer.state.step)
 
@@ -216,7 +242,7 @@ def train_step(optimizer,
         targets_segmentation=targets_segmentation,
         rngs={"dropout": dropout_rng})
 
-    loss, weight_sum = compute_weighted_cross_entropy(logits, targets, weights,
+    loss, weight_sum = compute_weighted_cross_entropy(logits, targets, weights.astype(jnp.float32),
                                                       label_smoothing)
     mean_loss = loss / weight_sum
     return mean_loss, logits
@@ -227,7 +253,7 @@ def train_step(optimizer,
   (_, logits), grad = grad_fn(optimizer.target)
   grad = jax.lax.pmean(grad, "batch")
   new_optimizer = optimizer.apply_gradient(grad, learning_rate=lr)
-  metrics = compute_metrics(logits, targets, weights)
+  metrics = compute_all_metrics(logits, targets, weights)
   metrics["learning_rate"] = lr
 
   return new_optimizer, metrics
@@ -236,11 +262,9 @@ def train_step(optimizer,
 def eval_step(params, batch, config, label_smoothing=0.0):
   """Calculate evaluation metrics on a batch."""
   inputs, targets = batch["inputs"], batch["targets"]
-  weights = jnp.where(targets > 0, 1.0, 0.0)
+  weights = jnp.where(targets > 0, 1, 0)
   logits = models.Transformer(config).apply({"params": params}, inputs, targets)
-
-  return compute_metrics(logits, targets, weights, label_smoothing)
-
+  return compute_all_metrics(logits, targets, weights, label_smoothing)
 
 def initialize_cache(inputs, max_decode_len, config):
   """Initialize a cache for a given input shape and max decode length."""
@@ -308,7 +332,7 @@ def predict_step(inputs,
   return beam_seqs[:, -1, 1:]
 
 
-# Utils for prediction and BLEU calculation
+# Utils for prediction
 # -----------------------------------------------------------------------------
 
 
@@ -355,16 +379,20 @@ def evaluate(*, p_eval_step, target, eval_ds: tf.data.Dataset,
   eval_metrics = common_utils.get_metrics(eval_metrics)
   eval_metrics_sums = jax.tree_map(jnp.sum, eval_metrics)
   eval_denominator = eval_metrics_sums.pop("denominator")
+  eval_sentence_accuracy = eval_metrics_sums.pop("sentence_accuracy")
+  eval_sentence_denominator = eval_metrics_sums.pop("sentence_denominator")
   eval_summary = jax.tree_map(
       lambda x: x / eval_denominator,  # pylint: disable=cell-var-from-loop
       eval_metrics_sums)
+  eval_summary["sentence_accuracy"] = eval_sentence_accuracy/eval_sentence_denominator
   return eval_summary
 
 
-def translate_and_calculate_bleu(*, p_pred_step, p_init_cache, target,
+def decode_and_calculate_acc(*, p_pred_step, p_init_cache, target, config,
                                  predict_ds: tf.data.Dataset, decode_tokens,
-                                 max_predict_length: int):
-  """Translates the `predict_ds` and calculates the BLEU score."""
+                                 encode_tokens, max_predict_length: int):
+  """Processes the `predict_ds` and calculates the sentence accuracy from 
+  decoded predictions."""
   n_devices = jax.local_device_count()
   logging.info("Translating evaluation dataset.")
   sources, references, predictions = [], [], []
@@ -379,7 +407,7 @@ def translate_and_calculate_bleu(*, p_pred_step, p_init_cache, target,
           pred_batch)
     pred_batch = common_utils.shard(pred_batch)
     cache = p_init_cache(pred_batch["inputs"])
-    predicted = p_pred_step(pred_batch["inputs"], target, cache, decode.EOS_ID,
+    predicted = p_pred_step(pred_batch["inputs"], target, cache, decode.EOS_ID, 
                             max_predict_length)
     predicted = tohost(predicted)
     inputs = tohost(pred_batch["inputs"])
@@ -392,15 +420,15 @@ def translate_and_calculate_bleu(*, p_pred_step, p_init_cache, target,
   logging.info("Translation: %d predictions %d references %d sources.",
                len(predictions), len(references), len(sources))
 
-  # Calculate BLEU score for translated eval corpus against reference.
-  bleu_matches = bleu.bleu_partial(references, predictions)
-  all_bleu_matches = per_host_sum_pmap(bleu_matches)
-  bleu_score = bleu.complete_bleu(*all_bleu_matches)
-  # Save translation samples for tensorboard.
+  # Calculate sentence accuracy for processed instructions against reference.
+  complete_matches = bleu.compute_complete_matches(references,predictions)
+  all_complete_matches = per_host_sum_pmap(complete_matches)
+  score = all_complete_matches[0]/all_complete_matches[1]
+  # Save samples for tensorboard.
   exemplars = ""
-  for n in np.random.choice(np.arange(len(predictions)), 8):
+  for n in np.random.choice(np.arange(len(predictions)), 12):
     exemplars += f"{sources[n]}\n\n{references[n]}\n\n{predictions[n]}\n\n"
-  return exemplars, bleu_score
+  return exemplars, score
 
 
 def train_and_evaluate(config: ml_collections.ConfigDict, workdir: str):
@@ -422,10 +450,9 @@ def train_and_evaluate(config: ml_collections.ConfigDict, workdir: str):
   # Load Dataset
   # ---------------------------------------------------------------------------
   logging.info("Initializing dataset.")
-  train_ds, eval_ds, predict_ds, encoder = input_pipeline.get_wmt_datasets(
+  train_ds, eval_train_ds, predict_train_ds, eval_ds, predict_ds, encoder = input_pipeline.get_pcfg_datasets(
       n_devices=jax.local_device_count(),
       config=config,
-      reverse_translation=config.reverse_translation,
       vocab_path=vocab_path)
 
   train_iter = iter(train_ds)
@@ -435,10 +462,16 @@ def train_and_evaluate(config: ml_collections.ConfigDict, workdir: str):
   def decode_tokens(toks):
     valid_toks = toks[:np.argmax(toks == eos_id) + 1].astype(np.int32)
     return encoder.detokenize(valid_toks).numpy().decode("utf-8")
+    
+  def encode_tokens(labels):
+    return encoder.tokenize(labels)
 
   if config.num_predict_steps > 0:
     predict_ds = predict_ds.take(config.num_predict_steps)
-
+    
+  if config.num_predict_steps_train > 0:
+    predict_train_ds = predict_train_ds.take(config.num_predict_steps_train)
+    
   logging.info("Initializing model, optimizer, and step functions.")
 
   # Build Model and Optimizer
@@ -571,13 +604,38 @@ def train_and_evaluate(config: ml_collections.ConfigDict, workdir: str):
           lr = train_metrics.pop("learning_rate").mean()
           metrics_sums = jax.tree_map(jnp.sum, train_metrics)
           denominator = metrics_sums.pop("denominator")
+          sentence_acc = metrics_sums.pop("sentence_accuracy")
+          sentence_denominator = metrics_sums.pop("sentence_denominator")
           summary = jax.tree_map(lambda x: x / denominator, metrics_sums)  # pylint: disable=cell-var-from-loop
+          summary["sentence_accuracy"] = sentence_acc/sentence_denominator
           summary["learning_rate"] = lr
           summary = {"train_" + k: v for k, v in summary.items()}
           writer.write_scalars(step, summary)
           train_metrics = []
 
-        with report_progress.timed("eval"):
+        with report_progress.timed("eval_train"):
+          eval_results_training = evaluate(
+              p_eval_step=p_eval_step,
+              target=optimizer.target,
+              eval_ds=eval_train_ds,
+              num_eval_steps=config.num_eval_train_steps)
+          writer.write_scalars(
+              step, {"eval_train_" + k: v for k, v in eval_results_training.items()})
+              
+        with report_progress.timed("predictions_train"):
+          exemplars, train_acc = decode_and_calculate_acc(
+              p_pred_step=p_pred_step,
+              p_init_cache=p_init_cache,
+              target=optimizer.target,
+              config=config,
+              predict_ds=predict_train_ds,
+              decode_tokens=decode_tokens,
+              encode_tokens=encode_tokens,
+              max_predict_length=config.max_predict_length)
+          writer.write_scalars(step, {"pred_train_acc": train_acc})
+          writer.write_texts(step, {"samples": exemplars})
+           
+        with report_progress.timed("eval"):  
           eval_results = evaluate(
               p_eval_step=p_eval_step,
               target=optimizer.target,
@@ -586,15 +644,17 @@ def train_and_evaluate(config: ml_collections.ConfigDict, workdir: str):
           writer.write_scalars(
               step, {"eval_" + k: v for k, v in eval_results.items()})
 
-        with report_progress.timed("translate_and_bleu"):
-          exemplars, bleu_score = translate_and_calculate_bleu(
+        with report_progress.timed("predictions"):
+          exemplars, test_acc = decode_and_calculate_acc(
               p_pred_step=p_pred_step,
               p_init_cache=p_init_cache,
               target=optimizer.target,
+              config=config,
               predict_ds=predict_ds,
               decode_tokens=decode_tokens,
+              encode_tokens=encode_tokens,
               max_predict_length=config.max_predict_length)
-          writer.write_scalars(step, {"bleu": bleu_score})
+          writer.write_scalars(step, {"pred_test_accuracy": test_acc})
           writer.write_texts(step, {"samples": exemplars})
 
       # Save a checkpoint on one host after every checkpoint_freq steps.
@@ -604,3 +664,4 @@ def train_and_evaluate(config: ml_collections.ConfigDict, workdir: str):
         with report_progress.timed("checkpoint"):
           checkpoints.save_checkpoint(workdir, jax_utils.unreplicate(optimizer),
                                       step)
+                                      

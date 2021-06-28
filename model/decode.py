@@ -168,7 +168,7 @@ def beam_search(inputs,
                 cache,
                 tokens_to_logits,
                 beam_size=4,
-                alpha=0.6,
+                alpha=0.0,
                 eos_id=EOS_ID,
                 max_decode_len=None):
   """Beam search for transformer machine translation.
