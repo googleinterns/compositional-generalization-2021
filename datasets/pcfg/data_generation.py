@@ -23,11 +23,11 @@ def generate_intermediate_tasks(source_line, target_line):
 
   Returns:
     A list of strings where each string corresponds to an intermediate decoding 
-    task. The last string is always the final output. For example:
+    task. The last string is always the final output + 'END'. For example:
 
     ["swap_first_last copy remove_second E18 E15 Q6 , P15 L18 X10 I15 Y14",
     "swap_first_last copy E18 E15 Q6", "swap_first_last E18 E15 Q6",
-    "Q6 E15 E18"]
+    "Q6 E15 E18 END"]
 
   Raises:
     AssertionError: Output and target strings do not match.
