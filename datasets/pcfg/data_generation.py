@@ -30,11 +30,11 @@ def generate_intermediate_tasks(source_line, target_line):
     "Q6 E15 E18 END"]
 
   Raises:
-    AssertionError: Output and target strings do not match.
+    ValueError: Output and target strings do not match.
   """
   
   unary_keys = ['copy', 'reverse', 'shift', 'swap_first_last', 'repeat', 'echo']
-  binary_keys =['append', 'prepend', 'remove_first', 'remove_second']
+  binary_keys = ['append', 'prepend', 'remove_first', 'remove_second']
   key_lengths = {k: len(k) for k in unary_keys + binary_keys}
 
   # Listing all the operations in a sentence (ordered from right to left).
@@ -54,7 +54,7 @@ def generate_intermediate_tasks(source_line, target_line):
   intermediate_tasks = [source_line]
   aux_line = source_line
   for i, op in zip(op_idx, operation_list):
-    this_int_task = aux_line[0:i]
+    this_int_task = aux_line[:i]
     right_idx = i + key_lengths[op] + 1
     aux_op = aux_line[right_idx:]
     # Unary keys:
@@ -93,7 +93,7 @@ def generate_intermediate_tasks(source_line, target_line):
         # ... and either remove the last space if this is the end of the string,
         # or append the remainder of the string.
         if left_idx == -1:
-          this_int_task = this_int_task[0:-1]
+          this_int_task = this_int_task[:-1]
         else:
           this_int_task += aux_line[right_idx+left_idx+1:]
     # Binary keys:
@@ -112,7 +112,9 @@ def generate_intermediate_tasks(source_line, target_line):
     intermediate_tasks.append(this_int_task)
     aux_line = this_int_task
 
-  assert aux_line == target_line, 'Output and target strings do not match'
+  if not aux_line == target_line:
+    raise ValueError('Output and target strings do not match.')
+    
   last_task = intermediate_tasks.pop()
   intermediate_tasks.append(last_task + ' END')
 
