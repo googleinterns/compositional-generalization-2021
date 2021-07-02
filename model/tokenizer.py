@@ -63,7 +63,7 @@ def _train_sentencepiece(dataset: tf.data.Dataset,
                          vocab_size: int,
                          maxchars: int = int(1e7),
                          model_path: str,
-                         model_type: str = 'unigram',
+                         model_type: str = 'word',
                          character_coverage: float = 1.0,
                          data_keys=('inputs', 'targets')):
   """Train SentencePiece tokenizer from subset of tf dataset.

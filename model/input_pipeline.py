@@ -10,9 +10,8 @@
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
-# limitations under the License.
 
-"""Input pipeline for a WMT dataset."""
+"""Input pipeline for a PCFG dataset."""
 
 import os
 from typing import Dict, Optional, List, Union
@@ -23,17 +22,15 @@ import ml_collections
 import tensorflow as tf
 import tensorflow_datasets as tfds
 
-AUTOTUNE = tf.data.AUTOTUNE
+AUTOTUNE = tf.data.experimental.AUTOTUNE
 Features = Dict[str, tf.Tensor]
 
 
 class NormalizeFeatureNamesOp:
   """Normalizes feature names to 'inputs' and 'targets'."""
 
-  def __init__(self, ds_info: tfds.core.DatasetInfo, reverse_translation: bool):
+  def __init__(self, ds_info: tfds.core.DatasetInfo):
     self.input_lang, self.target_lang = ds_info.supervised_keys
-    if reverse_translation:
-      self.input_lang, self.target_lang = self.target_lang, self.input_lang
 
   def __call__(self, features: Features) -> Features:
     features['inputs'] = features.pop(self.input_lang)
@@ -42,17 +39,13 @@ class NormalizeFeatureNamesOp:
 
 
 def get_raw_dataset(dataset_builder: tfds.core.DatasetBuilder,
-                    split: str,
-                    *,
-                    reverse_translation: bool = False) -> tf.data.Dataset:
-  """Loads a raw WMT dataset and normalizes feature keys.
+                    split: str) -> tf.data.Dataset:
+  """Loads a raw PCFG dataset and normalizes feature keys.
 
   Args:
     dataset_builder: TFDS dataset builder that can build `slit`.
     split: Split to use. This must be the full split. We shard the split across
       multiple hosts and currently don't support sharding subsplits.
-    reverse_translation: bool: whether to reverse the translation direction.
-      e.g. for 'de-en' this translates from english to german.
 
   Returns:
     Dataset with source and target language features mapped to 'inputs' and
@@ -64,7 +57,7 @@ def get_raw_dataset(dataset_builder: tfds.core.DatasetBuilder,
   ds = dataset_builder.as_dataset(split=per_host_split, shuffle_files=False)
   ds = ds.map(
       NormalizeFeatureNamesOp(
-          dataset_builder.info, reverse_translation=reverse_translation),
+          dataset_builder.info),
       num_parallel_calls=AUTOTUNE)
   return ds
 
@@ -264,7 +257,7 @@ def _pack_with_tf_ops(dataset: tf.data.Dataset, keys: List[str],
 # -----------------------------------------------------------------------------
 # Main dataset prep routines.
 # -----------------------------------------------------------------------------
-def preprocess_wmt_data(dataset,
+def preprocess_pcfg_data(dataset,
                         shuffle: bool,
                         num_epochs: Optional[int] = 1,
                         pack_examples: bool = True,
@@ -313,18 +306,18 @@ def preprocess_wmt_data(dataset,
   return dataset
 
 
-def get_wmt_datasets(config: ml_collections.ConfigDict,
+def get_pcfg_datasets(config: ml_collections.ConfigDict,
                      *,
                      n_devices: int,
-                     reverse_translation: bool = True,
                      vocab_path: Optional[str] = None):
   """Load and return dataset of batched examples for use during training."""
   if vocab_path is None:
-    vocab_path = os.path.expanduser('~/wmt_sentencepiece_model')
+    vocab_path = os.path.expanduser('~/pcfg_sentencepiece_model')
 
   train_ds_builder = tfds.builder(config.dataset_name)
+  
   train_data = get_raw_dataset(
-      train_ds_builder, 'train', reverse_translation=reverse_translation)
+      train_ds_builder, 'train')
 
   if config.eval_dataset_name:
     eval_ds_builder = tfds.builder(config.eval_dataset_name)
@@ -332,8 +325,7 @@ def get_wmt_datasets(config: ml_collections.ConfigDict,
     eval_ds_builder = train_ds_builder
   eval_data = get_raw_dataset(
       eval_ds_builder,
-      config.eval_split,
-      reverse_translation=reverse_translation)
+      config.eval_split)
 
   # Tokenize data.
   sp_tokenizer = tokenizer.load_or_train_tokenizer(
@@ -348,22 +340,37 @@ def get_wmt_datasets(config: ml_collections.ConfigDict,
 
   batch_size = config.per_device_batch_size * n_devices
 
-  train_ds = preprocess_wmt_data(
+  train_ds = preprocess_pcfg_data(
       train_data,
       shuffle=True,
       num_epochs=None,
       pack_examples=True,
       batch_size=batch_size,
       max_length=config.max_target_length)
+      
+  eval_train_ds = preprocess_pcfg_data(
+      train_data,
+      shuffle=False,
+      pack_examples=False,
+      batch_size=batch_size,
+      max_length=config.max_eval_target_length)
+      
+  predict_train_ds = preprocess_pcfg_data(
+      train_data,
+      shuffle=False,
+      pack_examples=False,
+      batch_size=batch_size,
+      max_length=config.max_predict_length,
+      drop_remainder=False)
 
-  eval_ds = preprocess_wmt_data(
+  eval_ds = preprocess_pcfg_data(
       eval_data,
       shuffle=False,
       pack_examples=False,
       batch_size=batch_size,
       max_length=config.max_eval_target_length)
 
-  predict_ds = preprocess_wmt_data(
+  predict_ds = preprocess_pcfg_data(
       eval_data,
       shuffle=False,
       pack_examples=False,
@@ -371,4 +378,4 @@ def get_wmt_datasets(config: ml_collections.ConfigDict,
       max_length=config.max_predict_length,
       drop_remainder=False)
 
-  return train_ds, eval_ds, predict_ds, sp_tokenizer
+  return train_ds, eval_train_ds, predict_train_ds, eval_ds, predict_ds, sp_tokenizer

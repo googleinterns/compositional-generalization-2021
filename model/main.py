@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Main file for running the WMT example.
+"""Main file for running the PCFG example.
 
 This file is intentionally kept short. The majority for logic is in libraries
 than can be easily tested and imported in Colab.
@@ -21,7 +21,6 @@ than can be easily tested and imported in Colab.
 from absl import app
 from absl import flags
 from absl import logging
-
 from clu import platform
 import train
 import jax
@@ -62,3 +61,4 @@ def main(argv):
 
 if __name__ == '__main__':
   app.run(main)
+  
