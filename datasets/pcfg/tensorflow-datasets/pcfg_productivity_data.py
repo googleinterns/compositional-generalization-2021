@@ -3,7 +3,7 @@
 import tensorflow_datasets as tfds
 
 _DESCRIPTION = """
-Iterative decoding data for the productivity split of the PCFG dataset.
+Original and iterative decoding data for the productivity split of the PCFG dataset.
 """
 
 _CITATION = """
@@ -33,7 +33,8 @@ class PcfgProductivityData(tfds.core.GeneratorBasedBuilder):
   MANUAL_DOWNLOAD_INSTRUCTIONS = """
   Run datasets/pcfg/data_generation.py on the productivity split of the PCFG data 
   (available at https://github.com/i-machine-think/am-i-compositional/tree/
-  master/data/pcfgset/productivity) and save output files in `manual_dir/data`.
+  master/data/pcfgset/productivity) and save both the original and the output 
+  files in `manual_dir/data`.
   """
 
   VERSION = tfds.core.Version('1.0.0')
@@ -60,11 +61,27 @@ class PcfgProductivityData(tfds.core.GeneratorBasedBuilder):
     archive_path = dl_manager.manual_dir / 'data'
     extracted_path = dl_manager.extract(archive_path)
     return {
+      # original data
       'train': self._generate_examples(
+          source_path=extracted_path / 'train.src',
+          target_path=extracted_path / 'train.tgt',
+      ),
+      'test': self._generate_examples(
+          source_path=extracted_path / 'test.src',
+          target_path=extracted_path / 'test.tgt',
+      ),
+      # iterative decoding data
+      'it_dec_train': self._generate_examples(
           source_path=extracted_path / 'it_dec_train.src',
           target_path=extracted_path / 'it_dec_train.tgt',
       ),
-      'test': self._generate_examples(
+      # val is the split used to check standard generalization to unseen data
+      'it_dec_val': self._generate_examples(
+          source_path=extracted_path / 'it_dec_val.src',
+          target_path=extracted_path / 'it_dec_val.tgt',
+      ),
+      # val is the split used to check iterative decoding generalization
+      'it_dec_test': self._generate_examples(
           source_path=extracted_path / 'it_dec_test.src',
           target_path=extracted_path / 'it_dec_test.tgt',
       ),
