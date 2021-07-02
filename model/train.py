@@ -105,7 +105,7 @@ def compute_weighted_cross_entropy(logits,
                                    targets,
                                    weights=None,
                                    label_smoothing=0.0):
-  """Compute weighted cross entropy and entropy for log probs and targets.
+  """Computes weighted cross entropy and entropy for log probs and targets.
 
   Args:
    logits: [batch, length, num_classes] float array.
@@ -141,7 +141,7 @@ def compute_weighted_cross_entropy(logits,
 
 
 def compute_weighted_accuracy(logits, targets, weights=None):
-  """Compute weighted accuracy for log probs and targets.
+  """Computes weighted accuracy for log probs and targets.
 
   Args:
    logits: [batch, length, num_classes] float array.
@@ -164,7 +164,7 @@ def compute_weighted_accuracy(logits, targets, weights=None):
   
   
 def compute_sentence_accuracy(logits, targets, weights=None):
-  """Compute sentence accuracy for log probs and targets.
+  """Computes sentence accuracy for log probs and targets.
 
   Args:
    logits: [batch, length, num_classes] float array.
@@ -175,20 +175,19 @@ def compute_sentence_accuracy(logits, targets, weights=None):
     Tuple of scalar loss and batch normalizing factor.
   """
   if logits.ndim != targets.ndim + 1:
-    raise ValueError("Incorrect shapes. Got shape %s logits and %s targets" %
-                     (str(logits.shape), str(targets.shape)))
+    raise ValueError(f'Incorrect shapes. Got shape {str(logits.shape)} logits and {str(targets.shape)} targets')
   boolean_array = jnp.equal(jnp.argmax(logits, axis=-1), targets)
   normalizing_factor = logits.shape[0]
   if weights is not None:
     boolean_array = jnp.equal(weights * jnp.argmax(logits, axis=-1), weights * targets)
-    normalizing_factor = jnp.sum(jnp.sum(weights, axis=-1)>0)
+    normalizing_factor = jnp.sum(jnp.sum(weights, axis=-1) > 0)
   loss = jnp.alltrue(boolean_array, axis=-1).astype(jnp.float32)
   
   return loss.sum(), normalizing_factor
 
 
 def compute_all_metrics(logits, labels, weights, label_smoothing=0.0):
-  """Compute summary metrics."""
+  """Computes summary metrics."""
   loss, weight_sum = compute_weighted_cross_entropy(logits, labels, weights,
                                                     label_smoothing)
   acc, _ = compute_weighted_accuracy(logits, labels, weights.astype(jnp.float32))
@@ -213,7 +212,7 @@ def train_step(optimizer,
                learning_rate_fn,
                label_smoothing=0.0,
                dropout_rng=None):
-  """Perform a single training step."""
+  """Performs a single training step."""
   # X_position and X_segmentation are needed only when using "packed examples"
   # where multiple sequences are packed into the same example with this
   # metadata.
@@ -260,14 +259,14 @@ def train_step(optimizer,
 
 
 def eval_step(params, batch, config, label_smoothing=0.0):
-  """Calculate evaluation metrics on a batch."""
+  """Calculates evaluation metrics on a batch."""
   inputs, targets = batch["inputs"], batch["targets"]
   weights = jnp.where(targets > 0, 1, 0)
   logits = models.Transformer(config).apply({"params": params}, inputs, targets)
   return compute_all_metrics(logits, targets, weights, label_smoothing)
 
 def initialize_cache(inputs, max_decode_len, config):
-  """Initialize a cache for a given input shape and max decode length."""
+  """Initializes a cache for a given input shape and max decode length."""
   target_shape = (inputs.shape[0], max_decode_len) + inputs.shape[2:]
   initial_variables = models.Transformer(config).init(
       jax.random.PRNGKey(0), jnp.ones(inputs.shape, config.dtype),
@@ -282,7 +281,7 @@ def predict_step(inputs,
                  max_decode_len,
                  config,
                  beam_size=4):
-  """Predict translation with fast decoding beam search on a batch."""
+  """Predicts translation with fast decoding beam search on a batch."""
   # Prepare transformer fast-decoder call for beam search: for beam search, we
   # need to set up our decoder model to handle a batch size equal to
   # batch_size * beam_size, where each batch item"s data is expanded in-place
@@ -337,13 +336,13 @@ def predict_step(inputs,
 
 
 def pad_examples(x, desired_batch_size):
-  """Expand batch to desired size by repeating last slice."""
+  """Expands batch to desired size by repeating last slice."""
   batch_pad = desired_batch_size - x.shape[0]
   return np.concatenate([x, np.tile(x[-1], (batch_pad, 1))], axis=0)
 
 
 def per_host_sum_pmap(in_tree):
-  """Execute psum on in_tree"s leaves over one device per host."""
+  """Executes psum on in_tree"s leaves over one device per host."""
   host2devices = collections.defaultdict(list)
   for d in jax.devices():
     host2devices[d.host_id].append(d)
@@ -360,14 +359,14 @@ def per_host_sum_pmap(in_tree):
 
 
 def tohost(x):
-  """Collect batches from all devices to host and flatten batch dimensions."""
+  """Collects batches from all devices to host and flatten batch dimensions."""
   n_device, n_batch, *remaining_dims = x.shape
   return np.array(x).reshape((n_device * n_batch,) + tuple(remaining_dims))
 
 
 def evaluate(*, p_eval_step, target, eval_ds: tf.data.Dataset,
              num_eval_steps: int):
-  """Evaluate the target an return a dictionary with the metrics."""
+  """Evaluates the target an return a dictionary with the metrics."""
   logging.info("Gathering evaluation metrics.")
   eval_metrics = []
   eval_iter = iter(eval_ds)  # pytype: disable=wrong-arg-types
@@ -607,7 +606,7 @@ def train_and_evaluate(config: ml_collections.ConfigDict, workdir: str):
           sentence_acc = metrics_sums.pop("sentence_accuracy")
           sentence_denominator = metrics_sums.pop("sentence_denominator")
           summary = jax.tree_map(lambda x: x / denominator, metrics_sums)  # pylint: disable=cell-var-from-loop
-          summary["sentence_accuracy"] = sentence_acc/sentence_denominator
+          summary["sentence_accuracy"] = sentence_acc / sentence_denominator
           summary["learning_rate"] = lr
           summary = {"train_" + k: v for k, v in summary.items()}
           writer.write_scalars(step, summary)
