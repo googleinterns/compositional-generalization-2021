@@ -32,7 +32,7 @@ def get_config():
   config.dataset_name = "pcfg_full_data_original"
 
   # Optional name of TFDS PCFG dataset to use for evaluation.
-  config.eval_dataset_name = False
+  config.eval_dataset_name = None
   config.eval_split = "test"
 
   # Per device batch size for training.
