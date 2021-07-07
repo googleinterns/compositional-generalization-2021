@@ -80,7 +80,7 @@ class PcfgProductivityData(tfds.core.GeneratorBasedBuilder):
           source_path=extracted_path / 'it_dec_val.src',
           target_path=extracted_path / 'it_dec_val.tgt',
       ),
-      # val is the split used to check iterative decoding generalization
+      # test is the split used to check iterative decoding generalization
       'it_dec_test': self._generate_examples(
           source_path=extracted_path / 'it_dec_test.src',
           target_path=extracted_path / 'it_dec_test.tgt',
@@ -96,7 +96,7 @@ class PcfgProductivityData(tfds.core.GeneratorBasedBuilder):
     count = 0
     for src, tgt in zip(source_lines,target_lines):
       line_id = count
-      count+=1
+      count += 1
       yield line_id, {
           'source': src.strip('\n'),
           'target': tgt.strip('\n'),
