@@ -317,15 +317,20 @@ def get_pcfg_datasets(config: ml_collections.ConfigDict,
   train_ds_builder = tfds.builder(config.dataset_name)
   
   train_data = get_raw_dataset(
-      train_ds_builder, 'train')
+      train_ds_builder, config.train_split)
 
   if config.eval_dataset_name:
     eval_ds_builder = tfds.builder(config.eval_dataset_name)
+    predict_ds_builder = tfds.builder(config.eval_dataset_name)
   else:
     eval_ds_builder = train_ds_builder
+    predict_ds_builder = train_ds_builder
   eval_data = get_raw_dataset(
       eval_ds_builder,
       config.eval_split)
+  predict_data = get_raw_dataset(
+      predict_ds_builder,
+      config.predict_split)
 
   # Tokenize data.
   sp_tokenizer = tokenizer.load_or_train_tokenizer(
@@ -336,6 +341,8 @@ def get_pcfg_datasets(config: ml_collections.ConfigDict,
   train_data = train_data.map(
       tokenizer.TokenizeOp(sp_tokenizer), num_parallel_calls=AUTOTUNE)
   eval_data = eval_data.map(
+      tokenizer.TokenizeOp(sp_tokenizer), num_parallel_calls=AUTOTUNE)
+  predict_data = predict_data.map(
       tokenizer.TokenizeOp(sp_tokenizer), num_parallel_calls=AUTOTUNE)
 
   batch_size = config.per_device_batch_size * n_devices
@@ -371,7 +378,7 @@ def get_pcfg_datasets(config: ml_collections.ConfigDict,
       max_length=config.max_eval_target_length)
 
   predict_ds = preprocess_pcfg_data(
-      eval_data,
+      predict_data,
       shuffle=False,
       pack_examples=False,
       batch_size=batch_size,
