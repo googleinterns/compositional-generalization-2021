@@ -156,7 +156,7 @@ def main(argv: Sequence[str]):
     ratio = 0.1 # ratio of test samples to store in the val set
     count = 0
     for in_line, out_line in zip(test_input_lines, test_output_lines):
-      if count < ratio*len(test_input_lines):
+      if count < ratio * len(test_input_lines):
         int_tasks = generate_intermediate_tasks(in_line.strip('\n'), out_line.strip('\n'))
         for i in range(len(int_tasks) - 1):
           out_file_src.write(int_tasks[i] + '\n')
