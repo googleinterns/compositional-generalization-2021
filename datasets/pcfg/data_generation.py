@@ -13,28 +13,28 @@ data_path = "/content/drive/MyDrive/preprocess_pcfg/pcfgset/data/"
 
 def generate_intermediate_tasks(source_line, target_line):
   """Generates intermediate tasks for iterative decoding.
-
+  
   Generates a list of intermediate tasks (including original instruction 
   and original output) for each source line and target line pair
-
+  
   Args:
     source_line: A source (instruction) string from the PCFG dataset.
     target_line: A target (output) string from the PCFG dataset.
-
+   
   Returns:
     A list of strings where each string corresponds to an intermediate decoding 
     task. The last string is always the final output + 'END'. For example:
-
+    
     ["swap_first_last copy remove_second E18 E15 Q6 , P15 L18 X10 I15 Y14",
     "swap_first_last copy E18 E15 Q6", "swap_first_last E18 E15 Q6",
     "Q6 E15 E18 END"]
-
+   
   Raises:
-    AssertionError: Output and target strings do not match.
+    ValueError: Output and target strings do not match.
   """
   
   unary_keys = ['copy', 'reverse', 'shift', 'swap_first_last', 'repeat', 'echo']
-  binary_keys =['append', 'prepend', 'remove_first', 'remove_second']
+  binary_keys = ['append', 'prepend', 'remove_first', 'remove_second']
   key_lengths = {k: len(k) for k in unary_keys + binary_keys}
 
   # Listing all the operations in a sentence (ordered from right to left).
@@ -54,7 +54,7 @@ def generate_intermediate_tasks(source_line, target_line):
   intermediate_tasks = [source_line]
   aux_line = source_line
   for i, op in zip(op_idx, operation_list):
-    this_int_task = aux_line[0:i]
+    this_int_task = aux_line[:i]
     right_idx = i + key_lengths[op] + 1
     aux_op = aux_line[right_idx:]
     # Unary keys:
@@ -93,7 +93,7 @@ def generate_intermediate_tasks(source_line, target_line):
         # ... and either remove the last space if this is the end of the string,
         # or append the remainder of the string.
         if left_idx == -1:
-          this_int_task = this_int_task[0:-1]
+          this_int_task = this_int_task[:-1]
         else:
           this_int_task += aux_line[right_idx+left_idx+1:]
     # Binary keys:
@@ -112,7 +112,9 @@ def generate_intermediate_tasks(source_line, target_line):
     intermediate_tasks.append(this_int_task)
     aux_line = this_int_task
 
-  assert aux_line == target_line, 'Output and target strings do not match'
+  if not aux_line == target_line:
+    raise ValueError('Output and target strings do not match.')
+    
   last_task = intermediate_tasks.pop()
   intermediate_tasks.append(last_task + ' END')
 
@@ -139,18 +141,30 @@ def main(argv: Sequence[str]):
     out_file_src.close()
     out_file_tgt.close()
     
-    # Generating test data.
+    # Generating val and test data.
     with open(data_path + 'test.src') as file:
       test_input_lines = file.readlines()
     with open(data_path + 'test.tgt') as file:
       test_output_lines = file.readlines()
     
-    out_file_src = open(data_path + 'it_dec_test.src', 'w')
-    out_file_tgt = open(data_path + 'it_dec_test.tgt', 'w')
+    out_file_src = open(data_path + 'it_dec_val.src', 'w')
+    out_file_tgt = open(data_path + 'it_dec_val.tgt', 'w')
     
+    out_file_src_dec = open(data_path + 'it_dec_test.src', 'w')
+    out_file_tgt_dec = open(data_path + 'it_dec_test.tgt', 'w')
+    
+    ratio = 0.1 # ratio of test samples to store in the val set
+    count = 0
     for in_line, out_line in zip(test_input_lines, test_output_lines):
-      out_file_src.write(in_line)
-      out_file_tgt.write(out_line.strip('\n') + ' END\n')
+      if count < ratio * len(test_input_lines):
+        int_tasks = generate_intermediate_tasks(in_line.strip('\n'), out_line.strip('\n'))
+        for i in range(len(int_tasks) - 1):
+          out_file_src.write(int_tasks[i] + '\n')
+          out_file_tgt.write(int_tasks[i + 1] + '\n')
+      else:
+        out_file_src_dec.write(in_line)
+        out_file_tgt_dec.write(out_line.strip('\n') + ' END\n')
+      count += 1
     
     out_file_src.close()
     out_file_tgt.close()
