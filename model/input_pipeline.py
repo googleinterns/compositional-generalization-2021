@@ -285,18 +285,20 @@ def preprocess_pcfg_data(dataset,
   dataset = dataset.repeat(num_epochs)
 
   if pack_examples:
-    dataset = pack_dataset(dataset, max_length)
+    dataset = pack_dataset(dataset, max_length, keys = ["inputs", "targets"])
     dataset = dataset.batch(batch_size, drop_remainder=drop_remainder)
   else:  # simple (static-shape) padded batching
     dataset = dataset.padded_batch(
         batch_size,
         padded_shapes={
             'inputs': max_length,
-            'targets': max_length
+            'targets': max_length,
+            'op': ()
         },
         padding_values={
             'inputs': 0,
-            'targets': 0
+            'targets': 0,
+            'op': 0,
         },
         drop_remainder=drop_remainder)
 
