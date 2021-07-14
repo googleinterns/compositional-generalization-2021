@@ -58,6 +58,10 @@ def get_config():
 
   # Max prediction loops for prediction dataset.
   config.num_predict_loops = 20
+  # Whether to use annotated number of operations to limit number of loops.
+  config.use_annotations = True
+  # Extra loops in addition to annotations.
+  config.extra_loops = 2
 
   # Base learning rate.
   config.learning_rate = 0.0625
@@ -106,6 +110,8 @@ def get_config():
   config.save_checkpoints = True
   # Whether to restore from existing model checkpoints.
   config.restore_checkpoints = True
+  # Just do prediction from saved checkpoint.
+  config.just_do_pred = True
 
   # Save a checkpoint every these number of steps.
   config.checkpoint_every_steps = 5_000
