@@ -118,7 +118,9 @@ def compute_weighted_cross_entropy(logits,
     Tuple of scalar loss and batch normalizing factor.
   """
   if logits.ndim != targets.ndim + 1:
-    raise ValueError(f'Incorrect shapes. Got shape {str(logits.shape)} logits and {str(targets.shape)} targets')
+    raise ValueError(
+      f'Incorrect shapes. Got shape {str(logits.shape)} logits and '
+      f'{str(targets.shape)} targets')
   vocab_size = logits.shape[-1]
   confidence = 1.0 - label_smoothing
   low_confidence = (1.0 - confidence) / (vocab_size - 1)
@@ -151,7 +153,9 @@ def compute_weighted_accuracy(logits, targets, weights=None):
     Tuple of scalar loss and batch normalizing factor.
   """
   if logits.ndim != targets.ndim + 1:
-    raise ValueError(f'Incorrect shapes. Got shape {str(logits.shape)} logits and {str(targets.shape)} targets')
+    raise ValueError(
+      f'Incorrect shapes. Got shape {str(logits.shape)} logits and '
+      f'{str(targets.shape)} targets')
   loss = jnp.equal(jnp.argmax(logits, axis=-1), targets)
   normalizing_factor = np.prod(logits.shape[:-1])
   if weights is not None:
@@ -173,7 +177,9 @@ def compute_sentence_accuracy(logits, targets, weights=None):
     Tuple of scalar loss and batch normalizing factor.
   """
   if logits.ndim != targets.ndim + 1:
-    raise ValueError(f'Incorrect shapes. Got shape {str(logits.shape)} logits and {str(targets.shape)} targets')
+    raise ValueError(
+      f'Incorrect shapes. Got shape {str(logits.shape)} logits and '
+      f'{str(targets.shape)} targets')
   boolean_array = jnp.equal(jnp.argmax(logits, axis=-1), targets)
   normalizing_factor = logits.shape[0]
   if weights is not None:
@@ -414,7 +420,6 @@ def decode_and_calculate_acc(*, p_pred_step, p_init_cache, target, config,
                             max_predict_length)
         count += 1
         predicted_list.append(tohost(predicted))
-    predicted = tohost(predicted)
     inputs = tohost(pred_batch["inputs"])
     targets = tohost(pred_batch["targets"])
     # Iterate through non-padding examples of batch.
