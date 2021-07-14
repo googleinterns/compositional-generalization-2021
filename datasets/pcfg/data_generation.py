@@ -1,7 +1,6 @@
 """ Generating training and test files for iterative decoding on PCFG.
 """
 
-from absl import app
 import numpy as np
 import re
 
@@ -118,10 +117,10 @@ def generate_intermediate_tasks(source_line, target_line):
   last_task = intermediate_tasks.pop()
   intermediate_tasks.append(last_task + ' END')
 
-  return intermediate_tasks
+  return intermediate_tasks, len(operations)
 
 
-def main(argv: Sequence[str]):
+def main():
     
     # Generating training data.
     with open(data_path + 'train.src') as file:
@@ -133,7 +132,7 @@ def main(argv: Sequence[str]):
     out_file_tgt = open(data_path + 'it_dec_train.tgt', 'w') 
     
     for in_line, out_line in zip(train_input_lines, train_output_lines):
-      int_tasks = generate_intermediate_tasks(in_line.strip('\n'), out_line.strip('\n'))
+      int_tasks, _ = generate_intermediate_tasks(in_line.strip('\n'), out_line.strip('\n'))
       for i in range(len(int_tasks) - 1):
         out_file_src.write(int_tasks[i] + '\n')
         out_file_tgt.write(int_tasks[i + 1] + '\n')
@@ -149,26 +148,31 @@ def main(argv: Sequence[str]):
     
     out_file_src = open(data_path + 'it_dec_val.src', 'w')
     out_file_tgt = open(data_path + 'it_dec_val.tgt', 'w')
-    
     out_file_src_dec = open(data_path + 'it_dec_test.src', 'w')
     out_file_tgt_dec = open(data_path + 'it_dec_test.tgt', 'w')
+    ops_file = open(data_path + 'it_dec_test.ops', 'w')
     
     ratio = 0.1 # ratio of test samples to store in the val set
     count = 0
     for in_line, out_line in zip(test_input_lines, test_output_lines):
       if count < ratio * len(test_input_lines):
-        int_tasks = generate_intermediate_tasks(in_line.strip('\n'), out_line.strip('\n'))
+        int_tasks, _ = generate_intermediate_tasks(in_line.strip('\n'), out_line.strip('\n'))
         for i in range(len(int_tasks) - 1):
           out_file_src.write(int_tasks[i] + '\n')
           out_file_tgt.write(int_tasks[i + 1] + '\n')
       else:
         out_file_src_dec.write(in_line)
         out_file_tgt_dec.write(out_line.strip('\n') + ' END\n')
+        _ , nb_ops = generate_intermediate_tasks(in_line.strip('\n'), out_line.strip('\n'))
+        ops_file.write(str(nb_ops) + '\n')
       count += 1
     
     out_file_src.close()
     out_file_tgt.close()
+    out_file_src_dec.close()
+    out_file_tgt_dec.close()
+    ops_file.close()
     
     
 if __name__ == '__main__':
-  app.run(main)
+  main()
