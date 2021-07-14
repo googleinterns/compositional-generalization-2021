@@ -40,6 +40,7 @@ import jax
 import jax.numpy as jnp
 import ml_collections
 import numpy as np
+import pickle as pkl
 import tensorflow as tf
 
 
@@ -342,7 +343,9 @@ def predict_step(inputs,
 def pad_examples(x, desired_batch_size):
   """Expands batch to desired size by repeating last slice."""
   batch_pad = desired_batch_size - x.shape[0]
-  return np.concatenate([x, np.tile(x[-1], (batch_pad, 1))], axis=0)
+  if len(x.shape) == 1:
+      x = np.expand_dims(x, 1)
+  return np.concatenate([x, np.tile(x[-1], (batch_pad,1))], axis=0)
 
 
 def per_host_sum_pmap(in_tree):
@@ -394,12 +397,14 @@ def evaluate(*, p_eval_step, target, eval_ds: tf.data.Dataset,
 def decode_and_calculate_acc(*, p_pred_step, p_init_cache, target, config,
                                  predict_ds: tf.data.Dataset, decode_tokens,
                                  encode_tokens, max_predict_length: int, 
-                                 max_predict_loops = 1):
+                                 max_predict_loops = 1, use_annotations = False,
+                                 extra_loops = 0):
   """Processes the `predict_ds` and calculates the sentence accuracy from 
   decoded predictions."""
   n_devices = jax.local_device_count()
   logging.info("Translating evaluation dataset.")
   sources, references, predictions = [], [], []
+  wrong_preds, wrong_refs, wrong_sources = [], [], []
   for pred_batch in predict_ds:
     pred_batch = jax.tree_map(lambda x: x._numpy(), pred_batch)  # pylint: disable=protected-access
     # Handle final odd-sized batch by padding instead of dropping it.
@@ -415,6 +420,8 @@ def decode_and_calculate_acc(*, p_pred_step, p_init_cache, target, config,
     predicted = p_pred_step(pred_batch['inputs'], target, cache, decode.EOS_ID,
                             max_predict_length)
     predicted_list = [tohost(predicted)]
+    if use_annotations == True:
+        max_predict_loops = jnp.max(pred_batch['op']) + extra_loops
     while count < max_predict_loops - 1: 
         predicted = p_pred_step(predicted, target, cache, decode.EOS_ID,
                             max_predict_length)
@@ -435,6 +442,10 @@ def decode_and_calculate_acc(*, p_pred_step, p_init_cache, target, config,
             predictions.append(decode_tokens(predicted[i]))
           if j == max_predict_loops - 1 and stop == False:
              predictions.append(decode_tokens(predicted[i]))
+      if not references[i] == predictions[i]:
+          wrong_preds.append(predictions[i])
+          wrong_refs.append(references[i])
+          wrong_sources.append(sources[i])
   logging.info("Translation: %d predictions %d references %d sources.",
                len(predictions), len(references), len(sources))
 
@@ -442,11 +453,11 @@ def decode_and_calculate_acc(*, p_pred_step, p_init_cache, target, config,
   complete_matches = bleu.compute_complete_matches(references,predictions)
   all_complete_matches = per_host_sum_pmap(complete_matches)
   score = all_complete_matches[0] / all_complete_matches[1]
-  # Save samples for tensorboard.
+  # Save (wrongly predicted) samples for tensorboard.
   exemplars = ""
-  for n in np.random.choice(np.arange(len(predictions)), 12):
-    exemplars += f"{sources[n]}\n\n{references[n]}\n\n{predictions[n]}\n\n"
-  return exemplars, score
+  for n in np.random.choice(np.arange(len(wrong_preds)), 12):
+    exemplars += f"{wrong_sources[n]}\n\n{wrong_refs[n]}\n\n{wrong_preds[n]}\n\n"
+  return exemplars, score, predicted_list
 
 
 def train_and_evaluate(config: ml_collections.ConfigDict, workdir: str):
@@ -588,99 +599,122 @@ def train_and_evaluate(config: ml_collections.ConfigDict, workdir: str):
   dropout_rngs = jax.random.split(rng, jax.local_device_count())
   del rng
 
-  logging.info("Starting training loop.")
-  hooks = []
-  report_progress = periodic_actions.ReportProgress(
-      num_train_steps=config.num_train_steps, writer=writer)
-  if jax.process_index() == 0:
-    hooks += [
-        report_progress,
-        periodic_actions.Profile(logdir=workdir, num_profile_steps=5)
-    ]
-  train_metrics = []
-  with metric_writers.ensure_flushes(writer):
-    for step in range(start_step, config.num_train_steps):
-      is_last_step = step == config.num_train_steps - 1
-
-      # Shard data to devices and do a training step.
-      with jax.profiler.StepTraceAnnotation("train", step_num=step):
-        batch = common_utils.shard(jax.tree_map(np.asarray, next(train_iter)))
-        optimizer, metrics = p_train_step(
-            optimizer, batch, dropout_rng=dropout_rngs)
-        train_metrics.append(metrics)
-
-      # Quick indication that training is happening.
-      logging.log_first_n(logging.INFO, "Finished training step %d.", 5, step)
-      for h in hooks:
-        h(step)
-
-      # Periodic metric handling.
-      if step % config.eval_every_steps == 0 or is_last_step:
-        with report_progress.timed("training_metrics"):
-          logging.info("Gathering training metrics.")
-          train_metrics = common_utils.get_metrics(train_metrics)
-          lr = train_metrics.pop("learning_rate").mean()
-          metrics_sums = jax.tree_map(jnp.sum, train_metrics)
-          denominator = metrics_sums.pop("denominator")
-          sentence_acc = metrics_sums.pop("sentence_accuracy")
-          sentence_denominator = metrics_sums.pop("sentence_denominator")
-          summary = jax.tree_map(lambda x: x / denominator, metrics_sums)  # pylint: disable=cell-var-from-loop
-          summary["sentence_accuracy"] = sentence_acc / sentence_denominator
-          summary["learning_rate"] = lr
-          summary = {"train_" + k: v for k, v in summary.items()}
-          writer.write_scalars(step, summary)
-          train_metrics = []
-
-        with report_progress.timed("eval_train"):
-          eval_results_training = evaluate(
-              p_eval_step=p_eval_step,
-              target=optimizer.target,
-              eval_ds=eval_train_ds,
-              num_eval_steps=config.num_eval_train_steps)
-          writer.write_scalars(
-              step, {"eval_train_" + k: v for k, v in eval_results_training.items()})
-              
-        with report_progress.timed("predictions_train"):
-          exemplars, train_acc = decode_and_calculate_acc(
-              p_pred_step=p_pred_step,
-              p_init_cache=p_init_cache,
-              target=optimizer.target,
-              config=config,
-              predict_ds=predict_train_ds,
-              decode_tokens=decode_tokens,
-              encode_tokens=encode_tokens,
-              max_predict_length=config.max_predict_length,
-              max_predict_loops=1)
-          writer.write_scalars(step, {"pred_train_acc": train_acc})
-          writer.write_texts(step, {"samples": exemplars})
-           
-        with report_progress.timed("eval"):  
-          eval_results = evaluate(
-              p_eval_step=p_eval_step,
-              target=optimizer.target,
-              eval_ds=eval_ds,
-              num_eval_steps=config.num_eval_steps)
-          writer.write_scalars(
-              step, {"eval_" + k: v for k, v in eval_results.items()})
-
-        with report_progress.timed("predictions"):
-          exemplars, test_acc = decode_and_calculate_acc(
-              p_pred_step=p_pred_step,
-              p_init_cache=p_init_cache,
-              target=optimizer.target,
-              config=config,
-              predict_ds=predict_ds,
-              decode_tokens=decode_tokens,
-              encode_tokens=encode_tokens,
-              max_predict_length=config.max_predict_length,
-              max_predict_loops=config.num_predict_loops)
-          writer.write_scalars(step, {"pred_test_accuracy": test_acc})
-          writer.write_texts(step, {"samples": exemplars})
-
-      # Save a checkpoint on one host after every checkpoint_freq steps.
-      save_checkpoint = (step % config.checkpoint_every_steps == 0 or
-                         is_last_step)
-      if config.save_checkpoints and save_checkpoint and jax.process_index() == 0:
-        with report_progress.timed("checkpoint"):
-          checkpoints.save_checkpoint(workdir, jax_utils.unreplicate(optimizer),
-                                      step)
+  if config.just_do_pred:
+      exemplars, test_acc, predicted_list = decode_and_calculate_acc(
+      p_pred_step=p_pred_step,
+      p_init_cache=p_init_cache,
+      target=optimizer.target,
+      config=config,
+      predict_ds=predict_ds,
+      decode_tokens=decode_tokens,
+      encode_tokens=encode_tokens,
+      max_predict_length=config.max_predict_length,
+      max_predict_loops=config.num_predict_loops,
+      use_annotations=config.use_annotations,
+      extra_loops=config.extra_loops)
+      writer.write_scalars(0, {"pred_test_accuracy": test_acc})
+      writer.write_texts(0, {"samples": exemplars})
+      # Log list of predictions
+      pkl.dump(predicted_list, open(workdir + "/predicted_list.p", "wb"))
+  else:
+      logging.info("Starting training loop.")
+      hooks = []
+      report_progress = periodic_actions.ReportProgress(
+          num_train_steps=config.num_train_steps, writer=writer)
+      if jax.process_index() == 0:
+        hooks += [
+            report_progress,
+            periodic_actions.Profile(logdir=workdir, num_profile_steps=5)
+        ]
+      train_metrics = []
+      with metric_writers.ensure_flushes(writer):
+        for step in range(start_step, config.num_train_steps):
+          is_last_step = step == config.num_train_steps - 1
+    
+          # Shard data to devices and do a training step.
+          with jax.profiler.StepTraceAnnotation("train", step_num=step):
+            batch = common_utils.shard(jax.tree_map(np.asarray, next(train_iter)))
+            optimizer, metrics = p_train_step(
+                optimizer, batch, dropout_rng=dropout_rngs)
+            train_metrics.append(metrics)
+    
+          # Quick indication that training is happening.
+          logging.log_first_n(logging.INFO, "Finished training step %d.", 5, step)
+          for h in hooks:
+            h(step)
+    
+          # Periodic metric handling.
+          if step % config.eval_every_steps == 0 or is_last_step:
+            with report_progress.timed("training_metrics"):
+              logging.info("Gathering training metrics.")
+              train_metrics = common_utils.get_metrics(train_metrics)
+              lr = train_metrics.pop("learning_rate").mean()
+              metrics_sums = jax.tree_map(jnp.sum, train_metrics)
+              denominator = metrics_sums.pop("denominator")
+              sentence_acc = metrics_sums.pop("sentence_accuracy")
+              sentence_denominator = metrics_sums.pop("sentence_denominator")
+              summary = jax.tree_map(lambda x: x / denominator, metrics_sums)  # pylint: disable=cell-var-from-loop
+              summary["sentence_accuracy"] = sentence_acc / sentence_denominator
+              summary["learning_rate"] = lr
+              summary = {"train_" + k: v for k, v in summary.items()}
+              writer.write_scalars(step, summary)
+              train_metrics = []
+    
+            with report_progress.timed("eval_train"):
+              eval_results_training = evaluate(
+                  p_eval_step=p_eval_step,
+                  target=optimizer.target,
+                  eval_ds=eval_train_ds,
+                  num_eval_steps=config.num_eval_train_steps)
+              writer.write_scalars(
+                  step, {"eval_train_" + k: v for k, v in eval_results_training.items()})
+                  
+            with report_progress.timed("predictions_train"):
+              exemplars, train_acc, _ = decode_and_calculate_acc(
+                  p_pred_step=p_pred_step,
+                  p_init_cache=p_init_cache,
+                  target=optimizer.target,
+                  config=config,
+                  predict_ds=predict_train_ds,
+                  decode_tokens=decode_tokens,
+                  encode_tokens=encode_tokens,
+                  max_predict_length=config.max_predict_length,
+                  max_predict_loops=1)
+              writer.write_scalars(step, {"pred_train_acc": train_acc})
+              writer.write_texts(step, {"samples": exemplars})
+               
+            with report_progress.timed("eval"):  
+              eval_results = evaluate(
+                  p_eval_step=p_eval_step,
+                  target=optimizer.target,
+                  eval_ds=eval_ds,
+                  num_eval_steps=config.num_eval_steps)
+              writer.write_scalars(
+                  step, {"eval_" + k: v for k, v in eval_results.items()})
+    
+            with report_progress.timed("predictions"):
+              exemplars, test_acc, predicted_list = decode_and_calculate_acc(
+                  p_pred_step=p_pred_step,
+                  p_init_cache=p_init_cache,
+                  target=optimizer.target,
+                  config=config,
+                  predict_ds=predict_ds,
+                  decode_tokens=decode_tokens,
+                  encode_tokens=encode_tokens,
+                  max_predict_length=config.max_predict_length,
+                  max_predict_loops=config.num_predict_loops,
+                  use_annotations=config.use_annotations,
+                  extra_loops=config.extra_loops)
+              writer.write_scalars(step, {"pred_test_accuracy": test_acc})
+              writer.write_texts(step, {"samples": exemplars})
+              # Log list of predictions
+              if is_last_step:
+                pkl.dump(predicted_list, open(workdir + "/predicted_list.p", "wb"))
+    
+          # Save a checkpoint on one host after every checkpoint_freq steps.
+          save_checkpoint = (step % config.checkpoint_every_steps == 0 or
+                             is_last_step)
+          if config.save_checkpoints and save_checkpoint and jax.process_index() == 0:
+            with report_progress.timed("checkpoint"):
+              checkpoints.save_checkpoint(workdir, jax_utils.unreplicate(optimizer),
+                                          step)
