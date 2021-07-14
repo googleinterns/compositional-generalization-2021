@@ -118,8 +118,9 @@ def compute_weighted_cross_entropy(logits,
     Tuple of scalar loss and batch normalizing factor.
   """
   if logits.ndim != targets.ndim + 1:
-    raise ValueError("Incorrect shapes. Got shape %s logits and %s targets" %
-                     (str(logits.shape), str(targets.shape)))
+    raise ValueError(
+      f'Incorrect shapes. Got shape {str(logits.shape)} logits and '
+      f'{str(targets.shape)} targets')
   vocab_size = logits.shape[-1]
   confidence = 1.0 - label_smoothing
   low_confidence = (1.0 - confidence) / (vocab_size - 1)
@@ -152,8 +153,9 @@ def compute_weighted_accuracy(logits, targets, weights=None):
     Tuple of scalar loss and batch normalizing factor.
   """
   if logits.ndim != targets.ndim + 1:
-    raise ValueError("Incorrect shapes. Got shape %s logits and %s targets" %
-                     (str(logits.shape), str(targets.shape)))
+    raise ValueError(
+      f'Incorrect shapes. Got shape {str(logits.shape)} logits and '
+      f'{str(targets.shape)} targets')
   loss = jnp.equal(jnp.argmax(logits, axis=-1), targets)
   normalizing_factor = np.prod(logits.shape[:-1])
   if weights is not None:
@@ -175,7 +177,9 @@ def compute_sentence_accuracy(logits, targets, weights=None):
     Tuple of scalar loss and batch normalizing factor.
   """
   if logits.ndim != targets.ndim + 1:
-    raise ValueError(f'Incorrect shapes. Got shape {str(logits.shape)} logits and {str(targets.shape)} targets')
+    raise ValueError(
+      f'Incorrect shapes. Got shape {str(logits.shape)} logits and '
+      f'{str(targets.shape)} targets')
   boolean_array = jnp.equal(jnp.argmax(logits, axis=-1), targets)
   normalizing_factor = logits.shape[0]
   if weights is not None:
@@ -383,13 +387,14 @@ def evaluate(*, p_eval_step, target, eval_ds: tf.data.Dataset,
   eval_summary = jax.tree_map(
       lambda x: x / eval_denominator,  # pylint: disable=cell-var-from-loop
       eval_metrics_sums)
-  eval_summary["sentence_accuracy"] = eval_sentence_accuracy/eval_sentence_denominator
+  eval_summary["sentence_accuracy"] = eval_sentence_accuracy / eval_sentence_denominator
   return eval_summary
 
 
 def decode_and_calculate_acc(*, p_pred_step, p_init_cache, target, config,
                                  predict_ds: tf.data.Dataset, decode_tokens,
-                                 encode_tokens, max_predict_length: int):
+                                 encode_tokens, max_predict_length: int, 
+                                 max_predict_loops = 1):
   """Processes the `predict_ds` and calculates the sentence accuracy from 
   decoded predictions."""
   n_devices = jax.local_device_count()
@@ -406,23 +411,37 @@ def decode_and_calculate_acc(*, p_pred_step, p_init_cache, target, config,
           pred_batch)
     pred_batch = common_utils.shard(pred_batch)
     cache = p_init_cache(pred_batch["inputs"])
-    predicted = p_pred_step(pred_batch["inputs"], target, cache, decode.EOS_ID, 
+    count = 0
+    predicted = p_pred_step(pred_batch['inputs'], target, cache, decode.EOS_ID,
                             max_predict_length)
-    predicted = tohost(predicted)
+    predicted_list = [tohost(predicted)]
+    while count < max_predict_loops - 1: 
+        predicted = p_pred_step(predicted, target, cache, decode.EOS_ID,
+                            max_predict_length)
+        count += 1
+        predicted_list.append(tohost(predicted))
     inputs = tohost(pred_batch["inputs"])
     targets = tohost(pred_batch["targets"])
     # Iterate through non-padding examples of batch.
-    for i, s in enumerate(predicted[:cur_pred_batch_size]):
-      sources.append(decode_tokens(inputs[i]))
-      references.append(decode_tokens(targets[i]))
-      predictions.append(decode_tokens(s))
+    for i in range(cur_pred_batch_size):
+      stop = False
+      for j in range(max_predict_loops):
+          predicted = predicted_list[j]
+          if j == 0:
+            sources.append(decode_tokens(inputs[i]))
+            references.append(decode_tokens(targets[i]))
+          if 'END' in decode_tokens(predicted[i]) and stop == False:
+            stop = True
+            predictions.append(decode_tokens(predicted[i]))
+          if j == max_predict_loops - 1 and stop == False:
+             predictions.append(decode_tokens(predicted[i]))
   logging.info("Translation: %d predictions %d references %d sources.",
                len(predictions), len(references), len(sources))
 
   # Calculate sentence accuracy for processed instructions against reference.
   complete_matches = bleu.compute_complete_matches(references,predictions)
   all_complete_matches = per_host_sum_pmap(complete_matches)
-  score = all_complete_matches[0]/all_complete_matches[1]
+  score = all_complete_matches[0] / all_complete_matches[1]
   # Save samples for tensorboard.
   exemplars = ""
   for n in np.random.choice(np.arange(len(predictions)), 12):
@@ -630,7 +649,8 @@ def train_and_evaluate(config: ml_collections.ConfigDict, workdir: str):
               predict_ds=predict_train_ds,
               decode_tokens=decode_tokens,
               encode_tokens=encode_tokens,
-              max_predict_length=config.max_predict_length)
+              max_predict_length=config.max_predict_length,
+              max_predict_loops=1)
           writer.write_scalars(step, {"pred_train_acc": train_acc})
           writer.write_texts(step, {"samples": exemplars})
            
@@ -652,7 +672,8 @@ def train_and_evaluate(config: ml_collections.ConfigDict, workdir: str):
               predict_ds=predict_ds,
               decode_tokens=decode_tokens,
               encode_tokens=encode_tokens,
-              max_predict_length=config.max_predict_length)
+              max_predict_length=config.max_predict_length,
+              max_predict_loops=config.num_predict_loops)
           writer.write_scalars(step, {"pred_test_accuracy": test_acc})
           writer.write_texts(step, {"samples": exemplars})
 
@@ -663,4 +684,3 @@ def train_and_evaluate(config: ml_collections.ConfigDict, workdir: str):
         with report_progress.timed("checkpoint"):
           checkpoints.save_checkpoint(workdir, jax_utils.unreplicate(optimizer),
                                       step)
-                                      
