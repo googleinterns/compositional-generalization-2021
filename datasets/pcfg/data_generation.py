@@ -1,7 +1,6 @@
 """ Generating training and test files for iterative decoding on PCFG.
 """
 
-from absl import app
 import numpy as np
 import re
 
@@ -23,11 +22,12 @@ def generate_intermediate_tasks(source_line, target_line):
    
   Returns:
     A list of strings where each string corresponds to an intermediate decoding 
-    task. The last string is always the final output + 'END'. For example:
+    task, and the number of operations involved in the task (int). The last 
+    string is always the final output + 'END'. For example:
     
     ["swap_first_last copy remove_second E18 E15 Q6 , P15 L18 X10 I15 Y14",
     "swap_first_last copy E18 E15 Q6", "swap_first_last E18 E15 Q6",
-    "Q6 E15 E18 END"]
+    "Q6 E15 E18 END"] , 3
    
   Raises:
     ValueError: Output and target strings do not match.
@@ -118,10 +118,10 @@ def generate_intermediate_tasks(source_line, target_line):
   last_task = intermediate_tasks.pop()
   intermediate_tasks.append(last_task + ' END')
 
-  return intermediate_tasks
+  return intermediate_tasks, len(operations)
 
 
-def main(argv: Sequence[str]):
+def main():
     
     # Generating training data.
     with open(data_path + 'train.src') as file:
@@ -129,17 +129,17 @@ def main(argv: Sequence[str]):
     with open(data_path + 'train.tgt') as file:
       train_output_lines = file.readlines()
     
-    out_file_src = open(data_path + 'it_dec_train.src', 'w')
-    out_file_tgt = open(data_path + 'it_dec_train.tgt', 'w') 
+    out_file_src_train = open(data_path + 'it_dec_train.src', 'w')
+    out_file_tgt_train = open(data_path + 'it_dec_train.tgt', 'w') 
     
     for in_line, out_line in zip(train_input_lines, train_output_lines):
-      int_tasks = generate_intermediate_tasks(in_line.strip('\n'), out_line.strip('\n'))
+      int_tasks, _ = generate_intermediate_tasks(in_line.strip('\n'), out_line.strip('\n'))
       for i in range(len(int_tasks) - 1):
-        out_file_src.write(int_tasks[i] + '\n')
-        out_file_tgt.write(int_tasks[i + 1] + '\n')
+        out_file_src_train.write(int_tasks[i] + '\n')
+        out_file_tgt_train.write(int_tasks[i + 1] + '\n')
     
-    out_file_src.close()
-    out_file_tgt.close()
+    out_file_src_train.close()
+    out_file_tgt_train.close()
     
     # Generating val and test data.
     with open(data_path + 'test.src') as file:
@@ -147,28 +147,33 @@ def main(argv: Sequence[str]):
     with open(data_path + 'test.tgt') as file:
       test_output_lines = file.readlines()
     
-    out_file_src = open(data_path + 'it_dec_val.src', 'w')
-    out_file_tgt = open(data_path + 'it_dec_val.tgt', 'w')
-    
-    out_file_src_dec = open(data_path + 'it_dec_test.src', 'w')
-    out_file_tgt_dec = open(data_path + 'it_dec_test.tgt', 'w')
+    out_file_src_validation = open(data_path + 'it_dec_val.src', 'w')
+    out_file_tgt_validation = open(data_path + 'it_dec_val.tgt', 'w')
+    out_file_src_test = open(data_path + 'it_dec_test.src', 'w')
+    out_file_tgt_test = open(data_path + 'it_dec_test.tgt', 'w')
+    out_file_ops_test = open(data_path + 'it_dec_test.ops', 'w')
     
     ratio = 0.1 # ratio of test samples to store in the val set
     count = 0
     for in_line, out_line in zip(test_input_lines, test_output_lines):
       if count < ratio * len(test_input_lines):
-        int_tasks = generate_intermediate_tasks(in_line.strip('\n'), out_line.strip('\n'))
+        int_tasks, _ = generate_intermediate_tasks(in_line.strip('\n'), out_line.strip('\n'))
         for i in range(len(int_tasks) - 1):
-          out_file_src.write(int_tasks[i] + '\n')
-          out_file_tgt.write(int_tasks[i + 1] + '\n')
+          out_file_src_validation.write(int_tasks[i] + '\n')
+          out_file_tgt_validation.write(int_tasks[i + 1] + '\n')
       else:
-        out_file_src_dec.write(in_line)
-        out_file_tgt_dec.write(out_line.strip('\n') + ' END\n')
+        out_file_src_test.write(in_line)
+        out_file_tgt_test.write(out_line.strip('\n') + ' END\n')
+        _ , nb_ops = generate_intermediate_tasks(in_line.strip('\n'), out_line.strip('\n'))
+        out_file_ops_test.write(str(nb_ops) + '\n')
       count += 1
     
-    out_file_src.close()
-    out_file_tgt.close()
+    out_file_src_validation.close()
+    out_file_tgt_validation.close()
+    out_file_src_test.close()
+    out_file_tgt_test.close()
+    out_file_ops_test.close()
     
     
 if __name__ == '__main__':
-  app.run(main)
+  main()
