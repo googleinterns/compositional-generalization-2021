@@ -1,11 +1,11 @@
-"""pcfg_productivity_data dataset."""
+"""pcfg_systematicity_data dataset."""
 
 from example_generator import example_generator
 import tensorflow as tf
 import tensorflow_datasets as tfds
 
 _DESCRIPTION = """
-Original and iterative decoding data for the productivity split of the PCFG dataset.
+Original and iterative decoding data for the systematicity split of the PCFG dataset.
 """
 
 _CITATION = """
@@ -29,13 +29,13 @@ _CITATION = """
 """
 
 
-class PcfgProductivityData(tfds.core.GeneratorBasedBuilder):
-  """DatasetBuilder for pcfg_productivity_data dataset."""
+class PcfgSystematicityData(tfds.core.GeneratorBasedBuilder):
+  """DatasetBuilder for pcfg_systematicity_data dataset."""
 
   MANUAL_DOWNLOAD_INSTRUCTIONS = """
-  Run datasets/pcfg/data_generation.py on the productivity split of the PCFG data 
+  Run datasets/pcfg/data_generation.py on the systematicity split of the PCFG data 
   (available at https://github.com/i-machine-think/am-i-compositional/tree/
-  master/data/pcfgset/productivity) and save both the original and the output 
+  master/data/pcfgset/systematicity) and save both the original and the output 
   files in `manual_dir/data`.
   """
 
@@ -55,7 +55,7 @@ class PcfgProductivityData(tfds.core.GeneratorBasedBuilder):
           'op': tf.int32,
         }),
         supervised_keys=('source', 'target'), 
-        homepage='https://github.com/i-machine-think/am-i-compositional/tree/master/data/pcfgset/productivity',
+        homepage='https://github.com/i-machine-think/am-i-compositional/tree/master/data/pcfgset/systematicity',
         citation=_CITATION,
     )
 
@@ -93,4 +93,3 @@ class PcfgProductivityData(tfds.core.GeneratorBasedBuilder):
 
   def _generate_examples(self, source_path, target_path, ops_path=None):
     return example_generator(source_path, target_path, ops_path)
-      
