@@ -23,6 +23,7 @@ This script trains a Transformer on a PCFG dataset.
 import collections
 import functools
 import os
+import pickle as pkl
 
 from absl import logging
 from clu import metric_writers
@@ -40,7 +41,6 @@ import jax
 import jax.numpy as jnp
 import ml_collections
 import numpy as np
-import pickle as pkl
 import tensorflow as tf
 
 
@@ -345,7 +345,7 @@ def pad_examples(x, desired_batch_size):
   batch_pad = desired_batch_size - x.shape[0]
   if len(x.shape) == 1:
       x = np.expand_dims(x, 1)
-  return np.concatenate([x, np.tile(x[-1], (batch_pad,1))], axis=0)
+  return np.concatenate([x, np.tile(x[-1], (batch_pad, 1))], axis=0)
 
 
 def per_host_sum_pmap(in_tree):
@@ -405,6 +405,7 @@ def decode_and_calculate_acc(*, p_pred_step, p_init_cache, target, config,
   logging.info("Translating evaluation dataset.")
   sources, references, predictions = [], [], []
   wrong_preds, wrong_refs, wrong_sources = [], [], []
+  predicted_list_all_batches = []
   for pred_batch in predict_ds:
     pred_batch = jax.tree_map(lambda x: x._numpy(), pred_batch)  # pylint: disable=protected-access
     # Handle final odd-sized batch by padding instead of dropping it.
@@ -420,7 +421,7 @@ def decode_and_calculate_acc(*, p_pred_step, p_init_cache, target, config,
     predicted = p_pred_step(pred_batch['inputs'], target, cache, decode.EOS_ID,
                             max_predict_length)
     predicted_list = [tohost(predicted)]
-    if use_annotations == True:
+    if use_annotations:
         max_predict_loops = jnp.max(pred_batch['op']) + extra_loops
     while count < max_predict_loops - 1: 
         predicted = p_pred_step(predicted, target, cache, decode.EOS_ID,
@@ -437,15 +438,19 @@ def decode_and_calculate_acc(*, p_pred_step, p_init_cache, target, config,
           if j == 0:
             sources.append(decode_tokens(inputs[i]))
             references.append(decode_tokens(targets[i]))
-          if 'END' in decode_tokens(predicted[i]) and stop == False:
+          if 'END' in decode_tokens(predicted[i]) and not stop:
             stop = True
             predictions.append(decode_tokens(predicted[i]))
-          if j == max_predict_loops - 1 and stop == False:
+          if j == max_predict_loops - 1 and not stop:
              predictions.append(decode_tokens(predicted[i]))
       if not references[i] == predictions[i]:
           wrong_preds.append(predictions[i])
           wrong_refs.append(references[i])
           wrong_sources.append(sources[i])
+    new_predicted_list = []
+    for array in predicted_list:
+      new_predicted_list.append(list(array))
+    predicted_list_all_batches.append(new_predicted_list)  
   logging.info("Translation: %d predictions %d references %d sources.",
                len(predictions), len(references), len(sources))
 
@@ -457,7 +462,8 @@ def decode_and_calculate_acc(*, p_pred_step, p_init_cache, target, config,
   exemplars = ""
   for n in np.random.choice(np.arange(len(wrong_preds)), 12):
     exemplars += f"{wrong_sources[n]}\n\n{wrong_refs[n]}\n\n{wrong_preds[n]}\n\n"
-  return exemplars, score, predicted_list
+  out_predictions = jax.tree_map(lambda x: decode_tokens(x), predicted_list_all_batches)
+  return exemplars, score, out_predictions
 
 
 def train_and_evaluate(config: ml_collections.ConfigDict, workdir: str):
