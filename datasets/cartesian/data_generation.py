@@ -136,8 +136,13 @@ def create_cartesian_dataset(trainsize, testsize, trainmindigits = 1,
         if short_input:
             input = example_in[:-1] + [IN_OUT_TOKEN]
         for j in range(len(sets[1])):
-          if i > 0 or j > 0:
+          if not short_input and (i > 0 or j > 0):
             input += [SEP_TOKEN]
+          if short_input and j > 0:
+            input += [SEP_TOKEN]
+          if copy and (i > 0 or j > 0):
+            output += [SEP_TOKEN]
+          if not copy and j > 0:
             output += [SEP_TOKEN]
           input += [sets[0][i]] + [sets[1][j]] 
           output += [sets[0][i]] + [sets[1][j]] 
