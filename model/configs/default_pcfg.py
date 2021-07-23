@@ -61,7 +61,17 @@ def get_config():
   # Whether to use annotated number of operations to limit number of loops.
   config.use_annotations = True
   # Extra loops in addition to annotations.
-  config.extra_loops = 2
+  config.extra_loops = 0
+  # Whether to copy input to prediction
+  config.copy_input = False
+  config.copy_input_in_full = False
+  # Whether to copy previous output
+  config.copy_output = False
+
+  config.end_token = None
+  config.in_out_token = None
+  config.sep_token = None
+  config.end_iter_token = 'END'
 
   # Base learning rate.
   config.learning_rate = 0.0625
@@ -111,10 +121,9 @@ def get_config():
   # Whether to restore from existing model checkpoints.
   config.restore_checkpoints = True
   # Just do prediction from saved checkpoint.
-  config.just_do_pred = True
-
+  config.just_do_pred = False
   # Save a checkpoint every these number of steps.
-  config.checkpoint_every_steps = 5_000
+  config.checkpoint_every_steps = 2_500
   # Frequency of eval during training, e.g. every 1000 steps.
   config.eval_every_steps = 1_250
 
