@@ -19,15 +19,13 @@ END_TOKEN = "[END]"
 START_TOKEN = "[START]"
 END_ITERATION_TOKEN = "[ENDITER]"
 
-def create_cartesian_dataset(trainsize, testsize, trainmindigits = 1, 
-                             trainmaxdigits = 6, testmindigits = 7, testmaxdigits = 8, 
-                             repeat_digits = False, reverse = False, row = False, 
-                             copy_output = False, short_input = False):
+def create_cartesian_dataset(trainsize, testsize, trainmindigits=1, 
+                             trainmaxdigits=6, testmindigits_nb = 6, 
+                             testmaxdigits_nb=7, testmindigits_lt=6, 
+                             testmaxdigits_lt=7, repeat_digits=False, 
+                             reverse=False, row=False, copy_output=False, 
+                             short_input=False):
   """
-  Adapted from CompositionalExperimentsTransformers-EMNLP2021-submission.ipynb
-  (https://colab.research.google.com/drive/1AKp6hLKQPyLoG-vxR6Fx72AWQw997Qcp)
-  by Santiago Ontanon.
-
   Generates the cartesian dataset.
   
   Generates a training set and an easy and a hard test sets for the cartesian 
@@ -42,10 +40,14 @@ def create_cartesian_dataset(trainsize, testsize, trainmindigits = 1,
       training samples
     trainmaxdigits: a scalar int corresponding to the maximum length of the 
       training samples (not included in the range)
-    testmindigits: a scalar int corresponding to the minimum length of the 
-      test samples
-    testmaxdigits: a scalar int corresponding to the maximum length of the 
-      test samples (not included in the range)
+    testmindigits_nb: a scalar int corresponding to the minimum length of the 
+      number arguments of the test samples
+    testmaxdigits_nb: a scalar int corresponding to the maximum length of the 
+      number arguments of the test samples (not included in the range)
+    testmindigits_lt: a scalar int corresponding to the minimum length of the 
+      letter arguments of the test samples
+    testmaxdigits_lt: a scalar int corresponding to the maximum length of the 
+      letter arguments of the test samples (not included in the range)
     repeat_digits: a boolean flag indicating whether to repeat digits in each 
       sample
     reverse: a boolean flag indicating whether to reverse inputs and outputs
@@ -66,11 +68,11 @@ def create_cartesian_dataset(trainsize, testsize, trainmindigits = 1,
     
   """
 
-  def create_example(minlen, maxlen):
+  def create_example(minlen_nb, maxlen_nb, minlen_lt, maxlen_lt):
     symbols1 = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]
     symbols2 = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"]
-    l1 = random.randint(minlen, maxlen)
-    l2 = random.randint(minlen, maxlen)
+    l1 = random.randint(minlen_nb, maxlen_nb)
+    l2 = random.randint(minlen_lt, maxlen_lt)
     set1 = []
     set2 = []
     for i in range(l1):
@@ -100,8 +102,33 @@ def create_cartesian_dataset(trainsize, testsize, trainmindigits = 1,
       return example_in, [START_TOKEN] + example_out
 
 
-  def iteratively_decode(example_in, example_out, reverse = False, row = False, 
-                         copy_output = False, short_input = False):
+  def iteratively_decode(example_in, example_out, reverse=False, row=False, 
+                         copy_output=False, short_input=False):
+    """
+    Creates one iterative decoding cartesian example.
+    
+    Generates an iterative decoding input-output pair from a cartesian input-
+    output pair.
+    
+    Args:
+      example_in: a list corresponding to a cartesian input
+      example_out: a list corresponding to a cartesian output
+      reverse: a boolean flag indicating whether to reverse inputs and outputs
+      row: a boolean flag indicating whether to include the next pair of tokens or
+        the next row of pairs of tokens in the iterative decoding outputs
+      copy_output: a boolean flag indicating whether to copy the previous 
+        iterative decoding output in the next iterative decoding output 
+      short_input: a boolean flag indicating whether to only include the previous 
+        pair of tokens or the entire previous output in the next iterative decoding
+        input 
+
+    Returns:
+      An iterative decoding cartesian example, i.e., a list of iterative decoding
+      inputs and a list of iterative decoding outputs with shape specified by the
+      flags row, copy_output and short_input.
+      
+    """
+    
     size = len(example_in)
     idx_list = [idx + 1 for idx, val in
              enumerate(example_in) if val == SEP_TOKEN]
@@ -157,11 +184,11 @@ def create_cartesian_dataset(trainsize, testsize, trainmindigits = 1,
       return inputs, outputs
 
 
-  def create_examples(n, minlen, maxlen):
+  def create_examples(n, minlen_nb, maxlen_nb, minlen_lt, maxlen_lt):
     examples_in, examples_out = [], []
     it_dec_examples_in, it_dec_examples_out = [], []
     for i in range(n):
-      ein, eout = create_example(minlen, maxlen)
+      ein, eout = create_example(minlen_nb, maxlen_nb, minlen_lt, maxlen_lt)
       it_dec_ein, it_dec_eout = iteratively_decode(ein, eout, reverse, row, 
                                                    copy_output, short_input)
       examples_in.append(ein)
@@ -172,13 +199,18 @@ def create_cartesian_dataset(trainsize, testsize, trainmindigits = 1,
 
 
   train_examples, it_dec_train_examples = create_examples(trainsize, trainmindigits,
+                                                          trainmaxdigits, trainmindigits,
                                                           trainmaxdigits)
   test_easy_examples, it_dec_test_easy_examples = create_examples(testsize, 
                                                                   trainmindigits, 
+                                                                  trainmaxdigits,
+                                                                  trainmindigits,
                                                                   trainmaxdigits)
   test_hard_examples, it_dec_test_hard_examples = create_examples(testsize, 
-                                                                  testmindigits, 
-                                                                  testmaxdigits)
+                                                                  testmindigits_nb, 
+                                                                  testmaxdigits_nb,
+                                                                  testmindigits_lt, 
+                                                                  testmaxdigits_lt)
   return (train_examples, it_dec_train_examples, 
           test_easy_examples, it_dec_test_easy_examples,
           test_hard_examples, it_dec_test_hard_examples)
@@ -211,7 +243,8 @@ def main():
 
   examples = create_cartesian_dataset(trainsize = 200000, testsize = 1024, 
                                       trainmindigits = 1, trainmaxdigits = 6, 
-                                      testmindigits = 7, testmaxdigits = 8, 
+                                      testmindigits_nb = 6, testmaxdigits_nb = 7,
+                                      testmindigits_lt = 5, testmaxdigits_lt = 6,  
                                       repeat_digits = False, reverse = False, 
                                       row = row, copy_output = copy, 
                                       short_input = short_input)
@@ -230,7 +263,8 @@ def main():
                                data_path + "it_dec_train.src",
                                data_path + "it_dec_train.tgt")
   # Generating iterative decoding val and test data (easy).
-  ratio = 0.1
+  ratio = 0.1 # ratio of test samples used for validation, i.e., to calculate
+              # step-by-step accuracy
   limit_idx = int(np.ceil(ratio * len(examples[2][0])))
   examples_in = examples[3][0][:limit_idx]
   examples_out = examples[3][1][:limit_idx]
@@ -251,7 +285,8 @@ def main():
                                data_path + "it_dec_test_easy.src",
                                data_path + "it_dec_test_easy.tgt")
   # Generating iterative decoding val and test data (hard).
-  ratio = 0.1
+  ratio = 0.1 # ratio of test samples used for validation, i.e., to calculate
+              # step-by-step accuracy
   limit_idx = int(np.ceil(ratio * len(examples[4][0])))
   examples_in = examples[5][0][:limit_idx]
   examples_out = examples[5][1][:limit_idx]
