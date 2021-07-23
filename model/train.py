@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""PCFG example.
+"""Iterative decoding example.
 
-This script trains a Transformer on a PCFG dataset.
+This script trains a Transformer on an iterative decoding dataset.
 """
 
 # pytype: disable=wrong-arg-count
@@ -397,8 +397,11 @@ def evaluate(*, p_eval_step, target, eval_ds: tf.data.Dataset,
 def decode_and_calculate_acc(*, p_pred_step, p_init_cache, target, config,
                                  predict_ds: tf.data.Dataset, decode_tokens,
                                  encode_tokens, max_predict_length: int, 
-                                 max_predict_loops = 1, use_annotations = False,
-                                 extra_loops = 0):
+                                 max_predict_loops=1, use_annotations=False,
+                                 extra_loops=0, copy_input=False,  
+                                 copy_input_in_full=False, copy_output=False,
+                                 end_token=None, in_out_token=None,
+                                 sep_token=None, end_iter_token=None):
   """Processes the `predict_ds` and calculates the sentence accuracy from 
   decoded predictions."""
   n_devices = jax.local_device_count()
@@ -406,51 +409,111 @@ def decode_and_calculate_acc(*, p_pred_step, p_init_cache, target, config,
   sources, references, predictions = [], [], []
   wrong_preds, wrong_refs, wrong_sources = [], [], []
   predicted_list_all_batches = []
+  
   for pred_batch in predict_ds:
     pred_batch = jax.tree_map(lambda x: x._numpy(), pred_batch)  # pylint: disable=protected-access
     # Handle final odd-sized batch by padding instead of dropping it.
     cur_pred_batch_size = pred_batch["inputs"].shape[0]
+    per_dev_batch_size = int(cur_pred_batch_size / n_devices)
     if cur_pred_batch_size % n_devices:
-      padded_size = int(np.ceil(cur_pred_batch_size / n_devices) * n_devices)
+      per_dev_batch_size = int(np.ceil(cur_pred_batch_size / n_devices))
+      padded_size = int(per_dev_batch_size * n_devices)
       pred_batch = jax.tree_map(
           lambda x: pad_examples(x, padded_size),  # pylint: disable=cell-var-from-loop
           pred_batch)
     pred_batch = common_utils.shard(pred_batch)
     cache = p_init_cache(pred_batch["inputs"])
-    count = 0
+    
     predicted = p_pred_step(pred_batch['inputs'], target, cache, decode.EOS_ID,
                             max_predict_length)
-    predicted_list = [tohost(predicted)]
+    concatenated_predicted = predicted
+    predicted_list = [tohost(concatenated_predicted)]
+    this_input = pred_batch["inputs"]
+    
     if use_annotations:
         max_predict_loops = jnp.max(pred_batch['op']) + extra_loops
+        
+    count = 0
     while count < max_predict_loops - 1: 
+        if copy_input:
+            concatenated_input = []
+            for i in range(n_devices):
+                concatenated_input_2 = []
+                for j in range(per_dev_batch_size):
+                    total_length = len(predicted[i][j])
+                    # concatenate [input with END removed, '[SEP2]', and output with 
+                    # '[START]' removed]
+                    encoded_end_token = encode_tokens(end_token)[0]
+                    idx = jnp.argwhere(this_input[i][j] == encoded_end_token)[0][0]
+                    modified_input = this_input[i][j][:idx]
+                    length = total_length - len(modified_input)
+                    encoded_sep2_token = encode_tokens(in_out_token)[:-1].numpy()
+                    if not copy_input_in_full:
+                        new_input = jnp.concatenate([encoded_sep2_token, predicted[i][j][1:length]])
+                    else:
+                        new_input = jnp.concatenate([encoded_sep2_token, concatenated_predicted[i][j][1:length]])
+                    new_input = jnp.concatenate([modified_input, new_input]) 
+                    concatenated_input_2.append(new_input)
+                concatenated_input.append(concatenated_input_2)
+            predicted = jnp.array(concatenated_input)
+            
         predicted = p_pred_step(predicted, target, cache, decode.EOS_ID,
                             max_predict_length)
+                            
+        if not copy_output:
+            concatenated_predicted = predicted 
+        else:
+            previous_conc_pred = concatenated_predicted
+            concatenated_predicted = []
+            for i in range(n_devices):
+                concatenated_predicted_2 = []
+                for j in range(per_dev_batch_size):
+                    total_length = len(previous_conc_pred[i][j])
+                    # concatenate [previous output with END removed, '[SEP]', 
+                    # current output with '[START]' removed]
+                    encoded_end_token = encode_tokens(end_token)[0]
+                    if encoded_end_token in previous_conc_pred[i][j]:
+                        idx = jnp.min(jnp.argwhere(previous_conc_pred[i][j] == encoded_end_token))
+                        modified_conc_pred = previous_conc_pred[i][j][:idx]
+                        length = total_length - len(modified_conc_pred)
+                        encoded_sep_token = encode_tokens(sep_token)[:-1].numpy()
+                        new_conc_pred = jnp.concatenate([encoded_sep_token, predicted[i][j][1:length]])
+                        new_conc_pred = jnp.concatenate([modified_conc_pred, new_conc_pred])
+                    else:
+                        new_conc_pred = predicted[i][j]
+                    concatenated_predicted_2.append(new_conc_pred)
+                concatenated_predicted.append(concatenated_predicted_2)
+            concatenated_predicted = jnp.array(concatenated_predicted)
+                    
         count += 1
-        predicted_list.append(tohost(predicted))
+        predicted_list.append(tohost(concatenated_predicted))
+    
     inputs = tohost(pred_batch["inputs"])
     targets = tohost(pred_batch["targets"])
+    
     # Iterate through non-padding examples of batch.
-    for i in range(cur_pred_batch_size):
+    for m in range(cur_pred_batch_size):
       stop = False
-      for j in range(max_predict_loops):
-          predicted = predicted_list[j]
-          if j == 0:
-            sources.append(decode_tokens(inputs[i]))
-            references.append(decode_tokens(targets[i]))
-          if 'END' in decode_tokens(predicted[i]) and not stop:
+      for n in range(max_predict_loops):
+          predicted = predicted_list[n]
+          if n == 0:
+            sources.append(decode_tokens(inputs[m]))
+            references.append(decode_tokens(targets[m]))
+          if end_iter_token in decode_tokens(predicted[m]) and not stop:
             stop = True
-            predictions.append(decode_tokens(predicted[i]))
-          if j == max_predict_loops - 1 and not stop:
-             predictions.append(decode_tokens(predicted[i]))
-      if not references[i] == predictions[i]:
-          wrong_preds.append(predictions[i])
-          wrong_refs.append(references[i])
-          wrong_sources.append(sources[i])
+            predictions.append(decode_tokens(predicted[m]))
+          if n == max_predict_loops - 1 and not stop:
+            predictions.append(decode_tokens(predicted[m]))
+      if not references[m] == predictions[m]:
+          wrong_preds.append(predictions[m])
+          wrong_refs.append(references[m])
+          wrong_sources.append(sources[m])
+          
     new_predicted_list = []
     for array in predicted_list:
       new_predicted_list.append(list(array))
     predicted_list_all_batches.append(new_predicted_list)  
+    
   logging.info("Translation: %d predictions %d references %d sources.",
                len(predictions), len(references), len(sources))
 
@@ -460,8 +523,9 @@ def decode_and_calculate_acc(*, p_pred_step, p_init_cache, target, config,
   score = all_complete_matches[0] / all_complete_matches[1]
   # Save (wrongly predicted) samples for tensorboard.
   exemplars = ""
-  for n in np.random.choice(np.arange(len(wrong_preds)), 12):
-    exemplars += f"{wrong_sources[n]}\n\n{wrong_refs[n]}\n\n{wrong_preds[n]}\n\n"
+  if len(wrong_preds) > 0:
+    for n in np.random.choice(np.arange(len(wrong_preds)), 12):
+        exemplars += f"{wrong_sources[n]}\n\n{wrong_refs[n]}\n\n{wrong_preds[n]}\n\n"
   out_predictions = jax.tree_map(lambda x: decode_tokens(x), predicted_list_all_batches)
   return exemplars, score, out_predictions
 
@@ -485,7 +549,7 @@ def train_and_evaluate(config: ml_collections.ConfigDict, workdir: str):
   # Load Dataset
   # ---------------------------------------------------------------------------
   logging.info("Initializing dataset.")
-  train_ds, eval_train_ds, predict_train_ds, eval_ds, predict_ds, encoder = input_pipeline.get_pcfg_datasets(
+  train_ds, eval_train_ds, predict_train_ds, eval_ds, predict_ds, encoder = input_pipeline.get_datasets(
       n_devices=jax.local_device_count(),
       config=config,
       vocab_path=vocab_path)
@@ -617,7 +681,14 @@ def train_and_evaluate(config: ml_collections.ConfigDict, workdir: str):
       max_predict_length=config.max_predict_length,
       max_predict_loops=config.num_predict_loops,
       use_annotations=config.use_annotations,
-      extra_loops=config.extra_loops)
+      extra_loops=config.extra_loops,
+      copy_input=config.copy_input,
+      copy_input_in_full=config.copy_input_in_full,
+      copy_output=config.copy_output,
+      end_token=config.end_token, 
+      in_out_token=config.in_out_token,
+      sep_token=config.sep_token, 
+      end_iter_token=config.end_iter_token)
       writer.write_scalars(0, {"pred_test_accuracy": test_acc})
       writer.write_texts(0, {"samples": exemplars})
       # Log list of predictions
@@ -685,7 +756,11 @@ def train_and_evaluate(config: ml_collections.ConfigDict, workdir: str):
                   decode_tokens=decode_tokens,
                   encode_tokens=encode_tokens,
                   max_predict_length=config.max_predict_length,
-                  max_predict_loops=1)
+                  max_predict_loops=1,
+                  end_token=config.end_token, 
+                  in_out_token=config.in_out_token,
+                  sep_token=config.sep_token, 
+                  end_iter_token=config.end_iter_token)
               writer.write_scalars(step, {"pred_train_acc": train_acc})
               writer.write_texts(step, {"samples": exemplars})
                
@@ -710,7 +785,14 @@ def train_and_evaluate(config: ml_collections.ConfigDict, workdir: str):
                   max_predict_length=config.max_predict_length,
                   max_predict_loops=config.num_predict_loops,
                   use_annotations=config.use_annotations,
-                  extra_loops=config.extra_loops)
+                  extra_loops=config.extra_loops,
+                  copy_input=config.copy_input,
+                  copy_input_in_full=config.copy_input_in_full,
+                  copy_output=config.copy_output,
+                  end_token=config.end_token, 
+                  in_out_token=config.in_out_token,
+                  sep_token=config.sep_token, 
+                  end_iter_token=config.end_iter_token)
               writer.write_scalars(step, {"pred_test_accuracy": test_acc})
               writer.write_texts(step, {"samples": exemplars})
               # Log list of predictions
