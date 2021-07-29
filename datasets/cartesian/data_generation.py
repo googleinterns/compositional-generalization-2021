@@ -5,11 +5,13 @@
 # Standard library imports
 import numpy as np
 import numpy.random as random
+
+
 # Specify local path in which the data will be saved
 data_path = "MyDrive/preprocess_cartesian/token/data/"
 # Flags
-row = False # whether to predict next row or next pair of tokens
-copy = False # whether to copy previous output to next output
+predict_row = False # whether to predict next row or next pair of tokens
+copy_output = False # whether to copy previous output to next output
 short_input = False # whether to copy only last predicted pair to input or
                     # entire predicition so far
 # Tokens
@@ -20,10 +22,10 @@ START_TOKEN = "[START]"
 END_ITERATION_TOKEN = "[ENDITER]"
 
 def create_cartesian_dataset(trainsize, testsize, trainmindigits=1, 
-                             trainmaxdigits=6, testmindigits_nb = 6, 
+                             trainmaxdigits=6, testmindigits_nb=6, 
                              testmaxdigits_nb=7, testmindigits_lt=6, 
                              testmaxdigits_lt=7, repeat_digits=False, 
-                             reverse=False, row=False, copy_output=False, 
+                             reverse=False, predict_row=False, copy_output=False, 
                              short_input=False):
   """
   Generates the cartesian dataset.
@@ -51,14 +53,13 @@ def create_cartesian_dataset(trainsize, testsize, trainmindigits=1,
     repeat_digits: a boolean flag indicating whether to repeat digits in each 
       sample
     reverse: a boolean flag indicating whether to reverse inputs and outputs
-    row: a boolean flag indicating whether to include the next pair of tokens or
-      the next row of pairs of tokens in the iterative decoding outputs
+    predict_row: a boolean flag indicating whether to include the next pair of 
+      tokens or the next row of pairs of tokens in the iterative decoding outputs
     copy_output: a boolean flag indicating whether to copy the previous 
       iterative decoding output in the next iterative decoding output 
     short_input: a boolean flag indicating whether to only include the previous 
       pair of tokens or the entire previous output in the next iterative decoding
       input 
-
   Returns:
     A tuple containing six lists corresponding to the trainining examples, the 
     iterative decoding trainining examples, the easy test examples, the iterative
@@ -102,7 +103,7 @@ def create_cartesian_dataset(trainsize, testsize, trainmindigits=1,
       return example_in, [START_TOKEN] + example_out
 
 
-  def iteratively_decode(example_in, example_out, reverse=False, row=False, 
+  def iteratively_decode(example_in, example_out, reverse=False, predict_row=False, 
                          copy_output=False, short_input=False):
     """
     Creates one iterative decoding cartesian example.
@@ -114,18 +115,17 @@ def create_cartesian_dataset(trainsize, testsize, trainmindigits=1,
       example_in: a list corresponding to a cartesian input
       example_out: a list corresponding to a cartesian output
       reverse: a boolean flag indicating whether to reverse inputs and outputs
-      row: a boolean flag indicating whether to include the next pair of tokens or
-        the next row of pairs of tokens in the iterative decoding outputs
+      predcit_row: a boolean flag indicating whether to include the next pair of 
+        tokens or the next row of pairs of tokens in the iterative decoding outputs
       copy_output: a boolean flag indicating whether to copy the previous 
         iterative decoding output in the next iterative decoding output 
       short_input: a boolean flag indicating whether to only include the previous 
         pair of tokens or the entire previous output in the next iterative decoding
         input 
-
     Returns:
       An iterative decoding cartesian example, i.e., a list of iterative decoding
       inputs and a list of iterative decoding outputs with shape specified by the
-      flags row, copy_output and short_input.
+      flags predict_row, copy_output and short_input.
       
     """
     
@@ -139,7 +139,7 @@ def create_cartesian_dataset(trainsize, testsize, trainmindigits=1,
     outputs = []
     input = example_in[:-1] + [IN_OUT_TOKEN]
     output = [START_TOKEN] 
-    if not row:
+    if not predict_row:
       for i in range(len(sets[0])):
         for j in range(len(sets[1])):
           if i > 0 or j > 0:
@@ -167,9 +167,9 @@ def create_cartesian_dataset(trainsize, testsize, trainmindigits=1,
             input += [SEP_TOKEN]
           if short_input and j > 0:
             input += [SEP_TOKEN]
-          if copy and (i > 0 or j > 0):
+          if copy_output and (i > 0 or j > 0):
             output += [SEP_TOKEN]
-          if not copy and j > 0:
+          if not copy_output and j > 0:
             output += [SEP_TOKEN]
           input += [sets[0][i]] + [sets[1][j]] 
           output += [sets[0][i]] + [sets[1][j]] 
@@ -189,7 +189,7 @@ def create_cartesian_dataset(trainsize, testsize, trainmindigits=1,
     it_dec_examples_in, it_dec_examples_out = [], []
     for i in range(n):
       ein, eout = create_example(minlen_nb, maxlen_nb, minlen_lt, maxlen_lt)
-      it_dec_ein, it_dec_eout = iteratively_decode(ein, eout, reverse, row, 
+      it_dec_ein, it_dec_eout = iteratively_decode(ein, eout, reverse, predict_row, 
                                                    copy_output, short_input)
       examples_in.append(ein)
       examples_out.append(eout)
@@ -241,13 +241,14 @@ def main():
     out_file_tgt.close()
 
 
-  examples = create_cartesian_dataset(trainsize = 200000, testsize = 1024, 
-                                      trainmindigits = 1, trainmaxdigits = 6, 
-                                      testmindigits_nb = 6, testmaxdigits_nb = 7,
-                                      testmindigits_lt = 5, testmaxdigits_lt = 6,  
-                                      repeat_digits = False, reverse = False, 
-                                      row = row, copy_output = copy, 
-                                      short_input = short_input)
+  examples = create_cartesian_dataset(trainsize=200000, testsize=1024, 
+                                      trainmindigits=1, trainmaxdigits=6, 
+                                      testmindigits_nb=6, testmaxdigits_nb=7,
+                                      testmindigits_lt=5, testmaxdigits_lt=6,  
+                                      repeat_digits=False, reverse=False, 
+                                      predict_row=predict_row, 
+                                      copy_output=copy_output, 
+                                      short_input=short_input)
   # Generating (normal) training data.
   generate_original_data_files(examples[0][0], examples[0][1], data_path + "train.src",
                                data_path + "train.tgt")
