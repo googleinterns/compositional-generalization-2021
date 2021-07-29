@@ -1,8 +1,13 @@
 """pcfg_productivity_data dataset."""
 
-from example_generator import example_generator
+import sys
+
 import tensorflow as tf
 import tensorflow_datasets as tfds
+
+sys.path.append('../../datasets')
+from datasets.common_files.example_generator import example_generator
+
 
 _DESCRIPTION = """
 Original and iterative decoding data for the productivity split of the PCFG dataset.
