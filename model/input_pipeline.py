@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 
-"""Input pipeline for a PCFG dataset."""
+"""Input pipeline."""
 
 import os
 from typing import Dict, Optional, List, Union
@@ -40,7 +40,7 @@ class NormalizeFeatureNamesOp:
 
 def get_raw_dataset(dataset_builder: tfds.core.DatasetBuilder,
                     split: str) -> tf.data.Dataset:
-  """Loads a raw PCFG dataset and normalizes feature keys.
+  """Loads a raw dataset and normalizes feature keys.
 
   Args:
     dataset_builder: TFDS dataset builder that can build `slit`.
@@ -257,7 +257,7 @@ def _pack_with_tf_ops(dataset: tf.data.Dataset, keys: List[str],
 # -----------------------------------------------------------------------------
 # Main dataset prep routines.
 # -----------------------------------------------------------------------------
-def preprocess_pcfg_data(dataset,
+def preprocess_data(dataset,
                         shuffle: bool,
                         num_epochs: Optional[int] = 1,
                         pack_examples: bool = True,
@@ -285,7 +285,7 @@ def preprocess_pcfg_data(dataset,
   dataset = dataset.repeat(num_epochs)
 
   if pack_examples:
-    dataset = pack_dataset(dataset, max_length, keys = ['inputs', 'targets'])
+    dataset = pack_dataset(dataset, max_length, keys = ["inputs", "targets"])
     dataset = dataset.batch(batch_size, drop_remainder=drop_remainder)
   else:  # simple (static-shape) padded batching
     dataset = dataset.padded_batch(
@@ -308,13 +308,13 @@ def preprocess_pcfg_data(dataset,
   return dataset
 
 
-def get_pcfg_datasets(config: ml_collections.ConfigDict,
+def get_datasets(config: ml_collections.ConfigDict,
                      *,
                      n_devices: int,
                      vocab_path: Optional[str] = None):
   """Load and return dataset of batched examples for use during training."""
   if vocab_path is None:
-    vocab_path = os.path.expanduser('~/pcfg_sentencepiece_model')
+    vocab_path = os.path.expanduser('~/sentencepiece_model')
 
   train_ds_builder = tfds.builder(config.dataset_name)
   
@@ -349,22 +349,22 @@ def get_pcfg_datasets(config: ml_collections.ConfigDict,
 
   batch_size = config.per_device_batch_size * n_devices
 
-  train_ds = preprocess_pcfg_data(
+  train_ds = preprocess_data(
       train_data,
       shuffle=True,
       num_epochs=None,
-      pack_examples=True,
+      pack_examples=False,
       batch_size=batch_size,
       max_length=config.max_target_length)
       
-  eval_train_ds = preprocess_pcfg_data(
+  eval_train_ds = preprocess_data(
       train_data,
       shuffle=False,
       pack_examples=False,
       batch_size=batch_size,
       max_length=config.max_eval_target_length)
       
-  predict_train_ds = preprocess_pcfg_data(
+  predict_train_ds = preprocess_data(
       train_data,
       shuffle=False,
       pack_examples=False,
@@ -372,14 +372,14 @@ def get_pcfg_datasets(config: ml_collections.ConfigDict,
       max_length=config.max_predict_length,
       drop_remainder=False)
 
-  eval_ds = preprocess_pcfg_data(
+  eval_ds = preprocess_data(
       eval_data,
       shuffle=False,
       pack_examples=False,
       batch_size=batch_size,
       max_length=config.max_eval_target_length)
 
-  predict_ds = preprocess_pcfg_data(
+  predict_ds = preprocess_data(
       predict_data,
       shuffle=False,
       pack_examples=False,

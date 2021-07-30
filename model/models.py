@@ -20,14 +20,26 @@
 # pytype: disable=wrong-keyword-args
 # pytype: disable=attribute-error
 
-from typing import Callable, Any, Optional
+from functools import partial
+from typing import (Any, Callable, Tuple, Optional)
 
+import jax
 from flax import linen as nn
 from flax import struct
 from jax import lax
+from jax import random
 import jax.numpy as jnp
 import numpy as np
 
+from flax.linen.linear import default_kernel_init
+from flax.linen.linear import DenseGeneral
+from flax.linen.module import Module, compact, merge_param
+from flax.linen.initializers import zeros
+
+PRNGKey = Any
+Shape = Tuple[int]
+Dtype = Any
+Array = Any
 
 @struct.dataclass
 class TransformerConfig:
@@ -50,6 +62,11 @@ class TransformerConfig:
   kernel_init: Callable = nn.initializers.xavier_uniform()
   bias_init: Callable = nn.initializers.normal(stddev=1e-6)
   posemb_init: Optional[Callable] = None
+  sinusoidal: bool = False
+  relative_radius: Optional[int] = None
+  relative_bias: Optional[bool] = False
+  enc2dec: Optional[bool] = False
+  copy_decoder: Optional[bool] = None
 
 
 def shift_right(x, axis=1):
@@ -89,6 +106,38 @@ def sinusoidal_init(max_len=2048,
     return jnp.array(pe)
 
   return init
+  
+
+def create_relative_ids(in_length, relative_radius, tar_length=None, de2enc_ids=None):
+    
+  enc_relative_ids = jnp.zeros([in_length, in_length], dtype=int)
+  for i in range(in_length):
+    for j in range(in_length):
+      diff = i - j
+      diff = relative_radius + min(max(diff, -relative_radius), relative_radius)
+      enc_relative_ids.at[i,j].set(diff)
+      
+  if tar_length is not None:
+      dec_relative_ids = jnp.zeros([tar_length, tar_length], dtype=int)
+      for i in range(tar_length):
+        for j in range(tar_length):
+          diff = i - j
+          diff = relative_radius + min(max(diff, -relative_radius), relative_radius)
+          dec_relative_ids.at[i,j].set(diff)
+    
+      dec2end_relative_ids = jnp.zeros([tar_length, in_length], dtype=int)
+      for i in range(tar_length):
+        for j in range(in_length):
+          if de2enc_ids:
+            diff = i - j
+            diff = relative_radius + min(max(diff, -relative_radius), relative_radius)
+            dec2end_relative_ids.at[i,j].set(diff)
+          else:
+            dec2end_relative_ids.at[i,j].set(relative_radius)
+
+      return enc_relative_ids, dec_relative_ids, dec2end_relative_ids
+  else:
+      return enc_relative_ids
 
 
 class AddPositionEmbs(nn.Module):
@@ -186,6 +235,338 @@ class MlpBlock(nn.Module):
     return output
 
 
+def dot_product_relative_attention_weights(query: Array,
+                                  key: Array,
+                                  bias: Optional[Array] = None,
+                                  relative_ids: Optional[Array] = None,
+                                  relative_embeddings: Optional[Callable] = None,
+                                  relative_biases: Optional[Callable] = None,
+                                  broadcast_dropout: bool = True,
+                                  dropout_rng: Optional[PRNGKey] = None,
+                                  dropout_rate: float = 0.,
+                                  deterministic: bool = False,
+                                  dtype: Dtype = jnp.float32,
+                                  precision: Optional[lax.Precision] = None):
+  """Computes dot-product attention weights given query and key.
+  
+  Used by :func:`dot_product_attention`, which is what you'll most likely use.
+  But if you want access to the attention weights for introspection, then
+  you can directly call this function and call einsum yourself.
+
+  Args:
+    query: queries for calculating attention with shape of
+      `[batch..., q_length, num_heads, qk_depth_per_head]`.
+    key: keys for calculating attention with shape of
+      `[batch..., kv_length, num_heads, qk_depth_per_head]`.
+    bias: bias for the attention weights. This should be broadcastable to the
+      shape `[batch..., num_heads, q_length, kv_length]`.
+      This can be used for incorporating causal masks, padding masks,
+      proximity bias, etc.
+    broadcast_dropout: bool: use a broadcasted dropout along batch dims.
+    dropout_rng: JAX PRNGKey: to be used for dropout
+    dropout_rate: dropout rate
+    deterministic: bool, deterministic or not (to apply dropout)
+    dtype: the dtype of the computation (default: float32)
+    precision: numerical precision of the computation see `jax.lax.Precision`
+      for details.
+
+  Returns:
+    Output of shape `[batch..., num_heads, q_length, kv_length]`.
+  """
+  assert query.ndim == key.ndim, 'q, k must have same rank.'
+  assert query.shape[:-3] == key.shape[:-3], (
+      'q, k batch dims must match.')
+  assert query.shape[-2] == key.shape[-2], (
+      'q, k num_heads must match.')
+  assert query.shape[-1] == key.shape[-1], 'q, k depths must match.'
+
+  # calculate attention matrix
+  depth = query.shape[-1]
+  query = query / jnp.sqrt(depth).astype(dtype)
+  # attn weight shape is (batch..., num_heads, q_length, kv_length)
+  attn_weights = jnp.einsum('...qhd,...khd->...hqk', query, key,
+                            precision=precision)
+
+  if relative_ids is not None:
+    if relative_embeddings is not None:
+        r = relative_embeddings(relative_ids)
+        matmul_qrel = jnp.einsum('...qhd,...qkd->hqk', query, r, 
+                                precision=precision)
+        attn_weights += matmul_qrel
+
+  # apply attention bias: masking, dropout, proximity bias, etc.
+  if bias is not None:
+    attn_weights = attn_weights + bias
+  if relative_biases is not None:
+    attn_weights += jnp.squeeze(relative_biases(relative_ids), axis = -1)
+
+  # normalize the attention weights
+  attn_weights = jax.nn.softmax(attn_weights).astype(dtype)
+
+  # apply attention dropout
+  if not deterministic and dropout_rate > 0.:
+    keep_prob = 1.0 - dropout_rate
+    if broadcast_dropout:
+      # dropout is broadcast across the batch + head dimensions
+      dropout_shape = tuple([1] * (key.ndim - 2)) + attn_weights.shape[-2:]
+      keep = random.bernoulli(dropout_rng, keep_prob, dropout_shape)
+    else:
+      keep = random.bernoulli(dropout_rng, keep_prob, attn_weights.shape)
+    multiplier = (keep.astype(attn_weights.dtype) /
+                  jnp.asarray(keep_prob, dtype=dtype))
+    attn_weights = attn_weights * multiplier
+
+  return attn_weights
+
+
+def dot_product_relative_attention(query: Array,
+                          key: Array,
+                          value: Array,
+                          bias: Optional[Array] = None,
+                          relative_ids: Optional[Array] = None,
+                          relative_embeddings: Optional[Callable] = None,
+                          relative_biases: Optional[Callable] = None,
+                          broadcast_dropout: bool = True,
+                          dropout_rng: Optional[PRNGKey] = None,
+                          dropout_rate: float = 0.,
+                          deterministic: bool = False,
+                          dtype: Dtype = jnp.float32,
+                          precision: Optional[lax.Precision] = None):
+  """Computes dot-product attention given query, key, and value.
+
+  This is the core function for applying attention based on
+  https://arxiv.org/abs/1706.03762. It calculates the attention weights given
+  query and key and combines the values using the attention weights.
+
+  Note: query, key, value needn't have any batch dimensions.
+
+  Args:
+    query: queries for calculating attention with shape of
+      `[batch..., q_length, num_heads, qk_depth_per_head]`.
+    key: keys for calculating attention with shape of
+      `[batch..., kv_length, num_heads, qk_depth_per_head]`.
+    value: values to be used in attention with shape of
+      `[batch..., kv_length, num_heads, v_depth_per_head]`.
+    bias: bias for the attention weights. This should be broadcastable to the
+      shape `[batch..., num_heads, q_length, kv_length]`.
+      This can be used for incorporating causal masks, padding masks,
+      proximity bias, etc.
+    broadcast_dropout: bool: use a broadcasted dropout along batch dims.
+    dropout_rng: JAX PRNGKey: to be used for dropout
+    dropout_rate: dropout rate
+    deterministic: bool, deterministic or not (to apply dropout)
+    dtype: the dtype of the computation (default: float32)
+    precision: numerical precision of the computation see `jax.lax.Precision`
+      for details.
+
+  Returns:
+    Output of shape `[batch..., q_length, num_heads, v_depth_per_head]`.
+  """
+  assert key.ndim == query.ndim == value.ndim, 'q, k, v must have same rank.'
+  assert query.shape[:-3] == key.shape[:-3] == value.shape[:-3], (
+      'q, k, v batch dims must match.')
+  assert query.shape[-2] == key.shape[-2] == value.shape[-2], (
+      'q, k, v num_heads must match.')
+  assert key.shape[-3] == value.shape[-3], 'k, v lengths must match.'
+
+  # compute attention weights
+  attn_weights = dot_product_relative_attention_weights(
+    query, key, bias, relative_ids, relative_embeddings,
+    relative_biases, broadcast_dropout, dropout_rng, dropout_rate,
+    deterministic, dtype, precision)
+
+  # return weighted sum over values for each query position
+  return jnp.einsum('...hqk,...khd->...qhd', attn_weights, value,
+                    precision=precision)
+
+
+class MultiHeadDotProductRelativeAttention(Module):
+  """Multi-head dot-product attention.
+
+    Attributes:
+      num_heads: number of attention heads. Features (i.e. inputs_q.shape[-1])
+        should be divisible by the number of heads.
+      dtype: the dtype of the computation (default: float32)
+      qkv_features: dimension of the key, query, and value.
+      out_features: dimension of the last projection
+      broadcast_dropout: bool: use a broadcasted dropout along batch dims.
+      dropout_rate: dropout rate
+      deterministic: if false, the attention weight is masked randomly
+        using dropout, whereas if true, the attention weights
+        are deterministic.
+      precision: numerical precision of the computation see `jax.lax.Precision`
+        for details.
+      kernel_init: initializer for the kernel of the Dense layers.
+      bias_init: initializer for the bias of the Dense layers.
+      use_bias: bool: whether pointwise QKVO dense transforms use bias.
+      attention_fn: dot_product_attention or compatible function. Accepts
+        query, key, value, and returns output of shape
+        `[bs, dim1, dim2, ..., dimN,, num_heads, value_channels]``
+      decode: whether to prepare and use an autoregressive cache.
+  """
+  num_heads: int
+  dtype: Dtype = jnp.float32
+  qkv_features: Optional[int] = None
+  out_features: Optional[int] = None
+  broadcast_dropout: bool = True
+  dropout_rate: float = 0.
+  deterministic: Optional[bool] = None
+  precision: Any = None
+  kernel_init: Callable[[PRNGKey, Shape, Dtype], Array] = default_kernel_init
+  bias_init: Callable[[PRNGKey, Shape, Dtype], Array] = zeros
+  use_bias: bool = True
+  attention_fn: Callable[[Array, Array, Array], Array] = dot_product_relative_attention
+  decode: bool = False
+  relative_radius: Optional[int] = None
+  relative_bias: bool = False
+  
+  def setup(self):
+    self.relative_embeddings = None
+    self.relative_biases = None
+    if self.relative_radius is not None:
+      relative_vocab_size = 2 * self.relative_radius + 1
+      head_dim = self.qkv_features // self.num_heads
+      self.relative_embeddings = nn.Embed(relative_vocab_size, head_dim, 
+                                          embedding_init=nn.initializers.normal(stddev=1.0))
+      if self.relative_bias:
+        self.relative_biases = nn.Embed(relative_vocab_size, 1, 
+                                        embedding_init=nn.initializers.normal(stddev=1.0))
+
+  @compact
+  def __call__(self,
+               inputs_q: Array,
+               inputs_kv: Array,
+               relative_ids: Optional[Array] = None,
+               mask: Optional[Array] = None,
+               deterministic: Optional[bool] = None):
+    """Applies multi-head dot product attention on the input data.
+
+    Projects the inputs into multi-headed query, key, and value vectors,
+    applies dot-product attention and project the results to an output vector.
+
+    Args:
+      inputs_q: input queries of shape
+        `[batch_sizes..., length, features]`.
+      inputs_kv: key/values of shape
+        `[batch_sizes..., length, features]`.
+      mask: attention mask of shape
+        `[batch_sizes..., num_heads, query_length, key/value_length]`.
+      deterministic: if false, the attention weight is masked randomly
+        using dropout, whereas if true, the attention weights
+        are deterministic.
+
+    Returns:
+      output of shape `[batch_sizes..., length, features]`.
+    """
+    if self.dropout_rate > 0.:  # Require `deterministic` only if using dropout.
+      deterministic = merge_param('deterministic', self.deterministic, deterministic)
+    features = self.out_features or inputs_q.shape[-1]
+    qkv_features = self.qkv_features or inputs_q.shape[-1]
+    assert qkv_features % self.num_heads == 0, (
+        'Memory dimension must be divisible by number of heads.')
+    head_dim = qkv_features // self.num_heads
+
+    dense = partial(DenseGeneral,
+                    axis=-1,
+                    features=(self.num_heads, head_dim),
+                    kernel_init=self.kernel_init,
+                    bias_init=self.bias_init,
+                    use_bias=self.use_bias,
+                    precision=self.precision)
+    # project inputs_q to multi-headed q/k/v
+    # dimensions are then [batch..., length, n_heads, n_features_per_head]
+    query, key, value = (dense(dtype=self.dtype, name='query')(inputs_q),
+                         dense(dtype=self.dtype, name='key')(inputs_kv),
+                         dense(dtype=self.dtype, name='value')(inputs_kv))
+
+    # During fast autoregressive decoding, we feed one position at a time,
+    # and cache the keys and values step by step.
+    if self.decode:
+      # detect if we're initializing by absence of existing cache data.
+      is_initialized = self.has_variable('cache', 'cached_key')
+      cached_key = self.variable('cache', 'cached_key',
+                                 jnp.zeros, key.shape, key.dtype)
+      cached_value = self.variable('cache', 'cached_value',
+                                   jnp.zeros, value.shape, value.dtype)
+      cache_index = self.variable('cache', 'cache_index',
+                                  lambda: jnp.array(0, dtype=jnp.int32))
+      if is_initialized:
+        *batch_dims, max_length, num_heads, depth_per_head = (
+            cached_key.value.shape)
+        # shape check of cached keys against query input
+        expected_shape = tuple(batch_dims) + (1, num_heads, depth_per_head)
+        if expected_shape != query.shape:
+          raise ValueError('Autoregressive cache shape error, '
+                           'expected query shape %s instead got %s.' %
+                           (expected_shape, query.shape))
+        # update key, value caches with our new 1d spatial slices
+        cur_index = cache_index.value
+        indices = (0,) * len(batch_dims) + (cur_index, 0, 0)
+        key = lax.dynamic_update_slice(cached_key.value, key, indices)
+        value = lax.dynamic_update_slice(cached_value.value, value, indices)
+        cached_key.value = key
+        cached_value.value = value
+        cache_index.value = cache_index.value + 1
+        # causal mask for cached decoder self-attention:
+        # our single query position should only attend to those key
+        # positions that have already been generated and cached,
+        # not the remaining zero elements.
+        mask = nn.combine_masks(
+            mask,
+            jnp.broadcast_to(jnp.arange(max_length) <= cur_index,
+                             tuple(batch_dims) + (1, 1, max_length)))
+
+    # Convert the boolean attention mask to an attention bias.
+    if mask is not None:
+      # attention mask in the form of attention bias
+      attention_bias = lax.select(
+          mask > 0,
+          jnp.full(mask.shape, 0.).astype(self.dtype),
+          jnp.full(mask.shape, -1e10).astype(self.dtype))
+    else:
+      attention_bias = None
+
+    dropout_rng = None
+    if not deterministic and self.dropout_rate > 0.:
+      dropout_rng = self.make_rng('dropout')
+
+    # apply attention
+    x = self.attention_fn(
+        query,
+        key,
+        value,
+        bias=attention_bias,
+        relative_ids=relative_ids,
+        relative_embeddings=self.relative_embeddings,
+        relative_biases=self.relative_biases,
+        dropout_rng=dropout_rng,
+        dropout_rate=self.dropout_rate,
+        broadcast_dropout=self.broadcast_dropout,
+        deterministic=deterministic,
+        dtype=self.dtype,
+        precision=self.precision)  # pytype: disable=wrong-keyword-args
+
+    # back to the original inputs dimensions
+    out = DenseGeneral(features=features,
+                       axis=(-2, -1),
+                       kernel_init=self.kernel_init,
+                       bias_init=self.bias_init,
+                       use_bias=self.use_bias,
+                       dtype=self.dtype,
+                       precision=self.precision,
+                       name='out')(x)
+    return out
+
+class SelfRelativeAttention(MultiHeadDotProductRelativeAttention):
+  """Self-attention special case of multi-head dot-product attention."""
+
+  @compact
+  def __call__(self, inputs_q: Array, relative_ids: Optional[Array] = None,
+               mask: Optional[Array] = None,
+               deterministic: Optional[bool] = None):
+    return super().__call__(inputs_q, inputs_q, relative_ids, mask, 
+                            deterministic=deterministic)
+
 class Encoder1DBlock(nn.Module):
   """Transformer encoder layer.
 
@@ -193,10 +574,12 @@ class Encoder1DBlock(nn.Module):
     config: TransformerConfig dataclass containing hyperparameters.
   """
   config: TransformerConfig
+  relative_radius: Optional[int] = None
 
   @nn.compact
   def __call__(self,
                inputs,
+               relative_ids=None,
                encoder_mask=None):
     """Applies Encoder1DBlock module.
 
@@ -212,7 +595,7 @@ class Encoder1DBlock(nn.Module):
     # Attention block.
     assert inputs.ndim == 3
     x = nn.LayerNorm(dtype=cfg.dtype)(inputs)
-    x = nn.SelfAttention(
+    x = SelfRelativeAttention(
         num_heads=cfg.num_heads,
         dtype=cfg.dtype,
         qkv_features=cfg.qkv_dim,
@@ -221,7 +604,10 @@ class Encoder1DBlock(nn.Module):
         use_bias=False,
         broadcast_dropout=False,
         dropout_rate=cfg.attention_dropout_rate,
-        deterministic=cfg.deterministic)(x, encoder_mask)
+        deterministic=cfg.deterministic,
+        relative_radius=self.relative_radius,
+        relative_bias=cfg.relative_bias)(x, relative_ids=relative_ids, 
+                                             mask=encoder_mask)
 
     x = nn.Dropout(rate=cfg.dropout_rate)(
         x, deterministic=cfg.deterministic)
@@ -241,11 +627,14 @@ class EncoderDecoder1DBlock(nn.Module):
     config: TransformerConfig dataclass containing hyperparameters.
   """
   config: TransformerConfig
+  relative_radius: Optional[int] = None
 
   @nn.compact
   def __call__(self,
                targets,
                encoded,
+               relative_ids_dec=None,
+               relative_ids_enc_dec=None,
                decoder_mask=None,
                encoder_decoder_mask=None):
     """Applies EncoderDecoder1DBlock module.
@@ -264,7 +653,7 @@ class EncoderDecoder1DBlock(nn.Module):
     # Decoder block.
     assert targets.ndim == 3
     x = nn.LayerNorm(dtype=cfg.dtype)(targets)
-    x = nn.SelfAttention(
+    x = SelfRelativeAttention(
         num_heads=cfg.num_heads,
         dtype=cfg.dtype,
         qkv_features=cfg.qkv_dim,
@@ -274,14 +663,17 @@ class EncoderDecoder1DBlock(nn.Module):
         broadcast_dropout=False,
         dropout_rate=cfg.attention_dropout_rate,
         deterministic=cfg.deterministic,
-        decode=cfg.decode)(x, decoder_mask)
+        decode=cfg.decode,
+        relative_radius=self.relative_radius,
+        relative_bias=cfg.relative_bias)(x, relative_ids=relative_ids_dec, 
+                                             mask=decoder_mask)
     x = nn.Dropout(rate=cfg.dropout_rate)(
         x, deterministic=cfg.deterministic)
     x = x + targets
 
     # Encoder-Decoder block.
     y = nn.LayerNorm(dtype=cfg.dtype)(x)
-    y = nn.MultiHeadDotProductAttention(
+    y = MultiHeadDotProductRelativeAttention(
         num_heads=cfg.num_heads,
         dtype=cfg.dtype,
         qkv_features=cfg.qkv_dim,
@@ -290,8 +682,10 @@ class EncoderDecoder1DBlock(nn.Module):
         use_bias=False,
         broadcast_dropout=False,
         dropout_rate=cfg.attention_dropout_rate,
-        deterministic=cfg.deterministic)(
-            y, encoded, encoder_decoder_mask)
+        deterministic=cfg.deterministic,
+        relative_radius=self.relative_radius,
+        relative_bias=cfg.relative_bias)(
+            y, encoded, relative_ids_enc_dec, encoder_decoder_mask)
 
     y = nn.Dropout(rate=cfg.dropout_rate)(
         y, deterministic=cfg.deterministic)
@@ -317,6 +711,7 @@ class Encoder(nn.Module):
   @nn.compact
   def __call__(self,
                inputs,
+               relative_ids=None,
                inputs_positions=None,
                encoder_mask=None):
     """Applies Transformer model on the inputs.
@@ -342,8 +737,9 @@ class Encoder(nn.Module):
       input_embed = self.shared_embedding
     x = inputs.astype('int32')
     x = input_embed(x)
-    x = AddPositionEmbs(config=cfg, decode=False, name='posembed_input')(
-        x, inputs_positions=inputs_positions)
+    if cfg.sinusoidal:
+      x = AddPositionEmbs(config=cfg, decode=False, name='posembed_input')(
+          x, inputs_positions=inputs_positions)
     x = nn.Dropout(rate=cfg.dropout_rate)(
         x, deterministic=cfg.deterministic)
 
@@ -351,9 +747,8 @@ class Encoder(nn.Module):
 
     # Input Encoder
     for lyr in range(cfg.num_layers):
-      x = Encoder1DBlock(config=cfg, name=f'encoderblock_{lyr}')(
-          x, encoder_mask)
-
+      x = Encoder1DBlock(config=cfg, relative_radius=cfg.relative_radius,
+                         name=f'encoderblock_{lyr}')(x, relative_ids, encoder_mask)
     encoded = nn.LayerNorm(dtype=cfg.dtype, name='encoder_norm')(x)
 
     return encoded
@@ -373,6 +768,8 @@ class Decoder(nn.Module):
   def __call__(self,
                encoded,
                targets,
+               relative_ids_dec=None,
+               relative_ids_enc_dec=None,
                targets_positions=None,
                decoder_mask=None,
                encoder_decoder_mask=None):
@@ -406,8 +803,9 @@ class Decoder(nn.Module):
     if not cfg.decode:
       y = shift_right(y)
     y = output_embed(y)
-    y = AddPositionEmbs(config=cfg, decode=cfg.decode, name='posembed_output')(
-        y, inputs_positions=targets_positions)
+    if cfg.sinusoidal:
+      y = AddPositionEmbs(config=cfg, decode=cfg.decode, name='posembed_output')(
+          y, inputs_positions=targets_positions)
     y = nn.Dropout(rate=cfg.dropout_rate)(
         y, deterministic=cfg.deterministic)
 
@@ -416,9 +814,11 @@ class Decoder(nn.Module):
     # Target-Input Decoder
     for lyr in range(cfg.num_layers):
       y = EncoderDecoder1DBlock(
-          config=cfg, name=f'encoderdecoderblock_{lyr}')(
+          config=cfg, relative_radius=cfg.relative_radius, name=f'encoderdecoderblock_{lyr}')(
               y,
               encoded,
+              relative_ids_dec=relative_ids_dec,
+              relative_ids_enc_dec=relative_ids_enc_dec,
               decoder_mask=decoder_mask,
               encoder_decoder_mask=encoder_decoder_mask)
     y = nn.LayerNorm(dtype=cfg.dtype, name='encoderdecoder_norm')(y)
@@ -465,6 +865,23 @@ class Transformer(nn.Module):
                            shared_embedding=self.shared_embedding)
     self.decoder = Decoder(config=cfg,
                            shared_embedding=self.shared_embedding)
+                   
+    if cfg.copy_decoder:
+      self.final_layer_copy = nn.Dense(cfg.qkv_dim, kernel_init=cfg.kernel_init,
+                                       bias_init=cfg.bias_init) # pe_input is the maximum input length
+      self.final_layer_copy_weight = nn.Dense(1, kernel_init=cfg.kernel_init,
+                                              bias_init=cfg.bias_init)
+      # We want vocab_size -> vocab_size, but that might be too big.
+      # So, we do a low-rank approximation, bringing it down to d_model first,
+      # in case d_model < vocab_size:
+      if cfg.qkv_dim < cfg.output_vocab_size:
+        self.final_layer_copy2a = nn.Dense(cfg.qkv_dim, kernel_init=cfg.kernel_init,
+                                               bias_init=cfg.bias_init)
+        self.final_layer_copy2b = nn.Dense(cfg.output_vocab_size, kernel_init=cfg.kernel_init,
+                                               bias_init=cfg.bias_init)
+      else:
+        self.final_layer_copy2 = nn.Dense(cfg.output_vocab_size, kernel_init=cfg.kernel_init,
+                                              bias_init=cfg.bias_init)                       
 
   def encode(self,
              inputs,
@@ -481,6 +898,11 @@ class Transformer(nn.Module):
       encoded feature array from the transformer encoder.
     """
     cfg = self.config
+    
+    relative_ids = None
+    if cfg.relative_radius is not None:
+      relative_ids = create_relative_ids(inputs.shape[1], cfg.relative_radius)
+    
     # Make padding attention mask.
     encoder_mask = nn.make_attention_mask(
         inputs > 0, inputs > 0, dtype=cfg.dtype)
@@ -495,6 +917,7 @@ class Transformer(nn.Module):
       )
     return self.encoder(
         inputs,
+        relative_ids=relative_ids,
         inputs_positions=inputs_positions,
         encoder_mask=encoder_mask)
 
@@ -519,6 +942,13 @@ class Transformer(nn.Module):
       logits array from transformer decoder.
     """
     cfg = self.config
+
+    relative_ids_dec, relative_ids_enc_dec = None, None
+    if cfg.relative_radius is not None:
+      _, relative_ids_dec, relative_ids_enc_dec = create_relative_ids(encoded.shape[1], 
+                                                                      cfg.relative_radius,
+                                                                      targets.shape[1],
+                                                                      cfg.enc2dec)
 
     # Make padding attention masks.
     if cfg.decode:
@@ -550,6 +980,8 @@ class Transformer(nn.Module):
     logits = self.decoder(
         encoded,
         targets,
+        relative_ids_dec=relative_ids_dec,
+        relative_ids_enc_dec=relative_ids_enc_dec,
         targets_positions=targets_positions,
         decoder_mask=decoder_mask,
         encoder_decoder_mask=encoder_decoder_mask)
@@ -578,10 +1010,28 @@ class Transformer(nn.Module):
     encoded = self.encode(inputs,
                           inputs_positions=inputs_positions,
                           inputs_segmentation=inputs_segmentation)
+                          
+    dec_output = self.decode(encoded,
+                                 inputs,  # only used for masks
+                                 targets,
+                                 targets_positions=targets_positions,
+                                 inputs_segmentation=inputs_segmentation,
+                                 targets_segmentation=targets_segmentation)
+    cfg = self.config
+    if not cfg.copy_decoder:
+      return dec_output
+    else:
+      final_output = dec_output # (batch_size, tar_seq_len, vocab_size)
+      copy_output_query = self.final_layer_copy(dec_output)  # (batch_size, tar_seq_len, d_model)
+      copy_output_weight = nn.sigmoid(self.final_layer_copy_weight(dec_output))
+      copy_output = dot_product_relative_attention(
+          copy_output_query, # (batch_size, tar_seq_len, d_model)
+          encoded,         # (batch_size, inp_seq_len, d_model)
+          jax.nn.one_hot(inputs, cfg.output_vocab_size)) # (batch_size, inp_seq_len, vocab_size)
+      if cfg.qkv_dim < cfg.output_vocab_size:
+          copy_output = self.final_layer_copy2b(self.final_layer_copy2a(copy_output))
+      else:
+          copy_output = self.final_layer_copy2(copy_output)
+      final_output = (1-copy_output_weight) * final_output + copy_output_weight * copy_output
+      return final_output
 
-    return self.decode(encoded,
-                       inputs,  # only used for masks
-                       targets,
-                       targets_positions=targets_positions,
-                       inputs_segmentation=inputs_segmentation,
-                       targets_segmentation=targets_segmentation)
