@@ -1,4 +1,4 @@
-# Copyright 2021 The Flax Authors.
+# Copyright 2021 Google LLC.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -71,7 +71,7 @@ def get_config():
   config.end_token = None
   config.in_out_token = None
   config.sep_token = None
-  config.end_iter_token = 'END'
+  config.end_iter_token = "END"
 
   # Base learning rate.
   config.learning_rate = 0.0625
