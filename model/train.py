@@ -404,6 +404,53 @@ def decode_and_calculate_acc(*, p_pred_step, p_init_cache, target, config,
                                  sep_token=None, end_iter_token=None):
   """Processes the `predict_ds` and calculates the sentence accuracy from 
   decoded predictions."""
+  
+  def concatenate_input(predicted):
+    concatenated_input = []
+    for i in range(n_devices):
+        concatenated_input_2 = []
+        for j in range(per_dev_batch_size):
+            total_length = len(predicted[i][j])
+            # concatenate [input with END removed, '[SEP2]', and output with 
+            # '[START]' removed]
+            encoded_end_token = encode_tokens(end_token)[0]
+            idx = jnp.argwhere(this_input[i][j] == encoded_end_token)[0][0]
+            modified_input = this_input[i][j][:idx]
+            length = total_length - len(modified_input)
+            encoded_sep2_token = encode_tokens(in_out_token)[:-1].numpy()
+            if not copy_input_in_full:
+                new_input = jnp.concatenate([encoded_sep2_token, predicted[i][j][1:length]])
+            else:
+                new_input = jnp.concatenate([encoded_sep2_token, concatenated_predicted[i][j][1:length]])
+            new_input = jnp.concatenate([modified_input, new_input]) 
+            concatenated_input_2.append(new_input)
+        concatenated_input.append(concatenated_input_2)
+    return concatenated_input
+  
+  
+  def concatenate_output(previous_conc_pred, predicted):
+    concatenated_predicted = []
+    for i in range(n_devices):
+        concatenated_predicted_2 = []
+        for j in range(per_dev_batch_size):
+            total_length = len(previous_conc_pred[i][j])
+            # concatenate [previous output with END removed, '[SEP]', 
+            # current output with '[START]' removed]
+            encoded_end_token = encode_tokens(end_token)[0]
+            if encoded_end_token in previous_conc_pred[i][j]:
+                idx = jnp.min(jnp.argwhere(previous_conc_pred[i][j] == encoded_end_token))
+                modified_conc_pred = previous_conc_pred[i][j][:idx]
+                length = total_length - len(modified_conc_pred)
+                encoded_sep_token = encode_tokens(sep_token)[:-1].numpy()
+                new_conc_pred = jnp.concatenate([encoded_sep_token, predicted[i][j][1:length]])
+                new_conc_pred = jnp.concatenate([modified_conc_pred, new_conc_pred])
+            else:
+                new_conc_pred = predicted[i][j]
+            concatenated_predicted_2.append(new_conc_pred)
+        concatenated_predicted.append(concatenated_predicted_2)
+    return concatenated_predicted
+  
+
   n_devices = jax.local_device_count()
   logging.info("Translating evaluation dataset.")
   sources, references, predictions = [], [], []
@@ -436,53 +483,17 @@ def decode_and_calculate_acc(*, p_pred_step, p_init_cache, target, config,
     count = 0
     while count < max_predict_loops - 1: 
         if copy_input:
-            concatenated_input = []
-            for i in range(n_devices):
-                concatenated_input_2 = []
-                for j in range(per_dev_batch_size):
-                    total_length = len(predicted[i][j])
-                    # concatenate [input with END removed, '[SEP2]', and output with 
-                    # '[START]' removed]
-                    encoded_end_token = encode_tokens(end_token)[0]
-                    idx = jnp.argwhere(this_input[i][j] == encoded_end_token)[0][0]
-                    modified_input = this_input[i][j][:idx]
-                    length = total_length - len(modified_input)
-                    encoded_sep2_token = encode_tokens(in_out_token)[:-1].numpy()
-                    if not copy_input_in_full:
-                        new_input = jnp.concatenate([encoded_sep2_token, predicted[i][j][1:length]])
-                    else:
-                        new_input = jnp.concatenate([encoded_sep2_token, concatenated_predicted[i][j][1:length]])
-                    new_input = jnp.concatenate([modified_input, new_input]) 
-                    concatenated_input_2.append(new_input)
-                concatenated_input.append(concatenated_input_2)
+            concatenated_input = concatenate_input(predicted)
             predicted = jnp.array(concatenated_input)
             
         predicted = p_pred_step(predicted, target, cache, decode.EOS_ID,
-                            max_predict_length)
+                                max_predict_length)
                             
         if not copy_output:
             concatenated_predicted = predicted 
         else:
-            previous_conc_pred = concatenated_predicted
-            concatenated_predicted = []
-            for i in range(n_devices):
-                concatenated_predicted_2 = []
-                for j in range(per_dev_batch_size):
-                    total_length = len(previous_conc_pred[i][j])
-                    # concatenate [previous output with END removed, '[SEP]', 
-                    # current output with '[START]' removed]
-                    encoded_end_token = encode_tokens(end_token)[0]
-                    if encoded_end_token in previous_conc_pred[i][j]:
-                        idx = jnp.min(jnp.argwhere(previous_conc_pred[i][j] == encoded_end_token))
-                        modified_conc_pred = previous_conc_pred[i][j][:idx]
-                        length = total_length - len(modified_conc_pred)
-                        encoded_sep_token = encode_tokens(sep_token)[:-1].numpy()
-                        new_conc_pred = jnp.concatenate([encoded_sep_token, predicted[i][j][1:length]])
-                        new_conc_pred = jnp.concatenate([modified_conc_pred, new_conc_pred])
-                    else:
-                        new_conc_pred = predicted[i][j]
-                    concatenated_predicted_2.append(new_conc_pred)
-                concatenated_predicted.append(concatenated_predicted_2)
+            concatenated_predicted = concatenate_output(concatenated_predicted, 
+                                                        predicted)
             concatenated_predicted = jnp.array(concatenated_predicted)
                     
         count += 1
