@@ -1,6 +1,6 @@
-## Creating TensorFlow datasets for PCFG
+## Creating TensorFlow datasets
 
-To create TensorFlow datasets for each split of the PCFG data (iid, productivity and systematicity), first install the TFDS CLI tool:
+To create TensorFlow datasets for each split of the PCFG data (iid, productivity and systematicity), or for the cartesian product dataset, first install the TFDS CLI tool:
 
     $ pip install -q tfds-nightly
 

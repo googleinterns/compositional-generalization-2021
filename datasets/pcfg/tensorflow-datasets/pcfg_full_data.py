@@ -1,8 +1,10 @@
 """pcfg_full_data dataset."""
 
-from example_generator import example_generator
 import tensorflow as tf
 import tensorflow_datasets as tfds
+
+from datasets.common_files.example_generator import example_generator
+
 
 _DESCRIPTION = """
 Original and iterative decoding data for the standard split of the PCFG dataset.
@@ -64,7 +66,7 @@ class PcfgFullData(tfds.core.GeneratorBasedBuilder):
     archive_path = dl_manager.manual_dir / 'data'
     extracted_path = dl_manager.extract(archive_path)
     return {
-      # original data
+      # Original data.
       'train': self._generate_examples(
           source_path=extracted_path / 'train.src',
           target_path=extracted_path / 'train.tgt',
@@ -73,17 +75,17 @@ class PcfgFullData(tfds.core.GeneratorBasedBuilder):
           source_path=extracted_path / 'test.src',
           target_path=extracted_path / 'test.tgt',
       ),
-      # iterative decoding data
+      # Iterative decoding data.
       'it_dec_train': self._generate_examples(
           source_path=extracted_path / 'it_dec_train.src',
           target_path=extracted_path / 'it_dec_train.tgt',
       ),
-      # val is the split used to check standard generalization to unseen data
+      # Val is the split used to check standard generalization to unseen data.
       'it_dec_val': self._generate_examples(
           source_path=extracted_path / 'it_dec_val.src',
           target_path=extracted_path / 'it_dec_val.tgt',
       ),
-      # test is the split used to check iterative decoding generalization
+      # Test is the split used to check iterative decoding generalization.
       'it_dec_test': self._generate_examples(
           source_path=extracted_path / 'it_dec_test.src',
           target_path=extracted_path / 'it_dec_test.tgt',
