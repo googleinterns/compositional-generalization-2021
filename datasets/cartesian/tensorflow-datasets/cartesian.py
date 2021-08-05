@@ -1,11 +1,8 @@
 """cartesian."""
 
-import sys
-
 import tensorflow as tf
 import tensorflow_datasets as tfds
 
-sys.path.append('../../datasets')
 from datasets.common_files.example_generator import example_generator
 
 
