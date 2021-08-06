@@ -57,6 +57,7 @@ class PcfgSystematicityData(tfds.core.GeneratorBasedBuilder):
           'op': tf.int32,
         }),
         supervised_keys=('source', 'target'), 
+        disable_shuffling=False,
         homepage='https://github.com/i-machine-think/am-i-compositional/tree/master/data/pcfgset/systematicity',
         citation=_CITATION,
     )
