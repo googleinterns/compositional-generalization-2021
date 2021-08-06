@@ -41,15 +41,15 @@ def get_config():
   config.per_device_batch_size = 64
 
   # Beam size for inference.
-  config.beam_size = 4
+  config.beam_size = 1
 
-  config.num_train_steps = 10_000
+  config.num_train_steps = 33_000
 
   # Number of steps to take during evaluation.
-  config.num_eval_steps = 1
+  config.num_eval_steps = 5
   # Number of steps to generate predictions.
   # -1 will use the whole eval dataset.
-  config.num_predict_steps = -1
+  config.num_predict_steps = 1
   # Number of steps to take during evaluation of training set.
   config.num_eval_train_steps = 5
   # Number of steps to generate predictions on the training set.
@@ -57,8 +57,9 @@ def get_config():
   config.num_predict_steps_train = 5
 
   # Max prediction loops for prediction dataset.
-  config.num_predict_loops = 20
+  config.num_predict_loops = 1
   # Whether to use annotated number of operations to limit number of loops.
+  config.has_ops = True
   config.use_annotations = True
   # Extra loops in addition to annotations.
   config.extra_loops = 0
@@ -110,6 +111,16 @@ def get_config():
   # Number of attention heads.
   config.num_heads = 4
 
+  # Sinusoidal absolute positional encodings.
+  config.sinusoidal = False
+  # Relative radius
+  config.relative_radius = 8 # or 'None' for no relative attention
+  config.relative_bias = True
+  config.enc2dec = True
+  
+  # Copy decoder layers.
+  config.copy_decoder = False
+
   # Dropout rate.
   config.dropout_rate = 0.1
 
@@ -123,9 +134,9 @@ def get_config():
   # Just do prediction from saved checkpoint.
   config.just_do_pred = False
   # Save a checkpoint every these number of steps.
-  config.checkpoint_every_steps = 2_500
+  config.checkpoint_every_steps = 4_125
   # Frequency of eval during training, e.g. every 1000 steps.
-  config.eval_every_steps = 1_250
+  config.eval_every_steps = 4_125
 
   # Use bfloat16 mixed precision training instead of float32.
   config.use_bfloat16 = True
