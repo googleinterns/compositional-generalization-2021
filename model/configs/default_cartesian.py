@@ -1,4 +1,4 @@
-# Copyright 2021 The Flax Authors.
+# Copyright 2021 Google LLC.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -25,17 +25,17 @@ def get_config():
   config.vocab_path = None
 
   # Vocabulary size if `vocab_path` is not given.
-  config.vocab_size = 535
+  config.vocab_size = 26
   config.max_corpus_chars = 10**7
 
-  # Name of TFDS PCFG dataset to use.
-  config.dataset_name = "pcfg_full_data"
-  config.train_split = "it_dec_train"
+  # Name of cartesian dataset to use.
+  config.dataset_name = "cartesian_token_short_input"
+  config.train_split = "train"
 
-  # Optional name of TFDS PCFG dataset to use for evaluation.
+  # Optional name of cartesian dataset to use for evaluation.
   config.eval_dataset_name = None
-  config.eval_split = "it_dec_val"
-  config.predict_split = "it_dec_test"
+  config.eval_split = "test_easy"
+  config.predict_split = "test_easy"
 
   # Per device batch size for training.
   config.per_device_batch_size = 64
@@ -43,13 +43,13 @@ def get_config():
   # Beam size for inference.
   config.beam_size = 4
 
-  config.num_train_steps = 10_000
+  config.num_train_steps = 5_000
 
   # Number of steps to take during evaluation.
   config.num_eval_steps = 1
   # Number of steps to generate predictions.
   # -1 will use the whole eval dataset.
-  config.num_predict_steps = -1
+  config.num_predict_steps = 2
   # Number of steps to take during evaluation of training set.
   config.num_eval_train_steps = 5
   # Number of steps to generate predictions on the training set.
@@ -57,11 +57,21 @@ def get_config():
   config.num_predict_steps_train = 5
 
   # Max prediction loops for prediction dataset.
-  config.num_predict_loops = 20
+  config.num_predict_loops = 1
   # Whether to use annotated number of operations to limit number of loops.
-  config.use_annotations = True
+  config.use_annotations = False
   # Extra loops in addition to annotations.
-  config.extra_loops = 2
+  config.extra_loops = 0
+  # Whether to copy input to prediction
+  config.copy_input = False
+  config.copy_input_in_full = False
+  # Whether to copy previous output
+  config.copy_output = False
+
+  config.end_token = "[END]"
+  config.in_out_token = "[SEP2]"
+  config.sep_token = "[SEP]"
+  config.end_iter_token = "[ENDITER]"
 
   # Base learning rate.
   config.learning_rate = 0.0625
@@ -76,11 +86,11 @@ def get_config():
   config.weight_decay = 0.0
 
   # Maximum length cutoff for training examples.
-  config.max_target_length = 256
+  config.max_target_length = 84
   # Maximum length cutoff for eval examples.
-  config.max_eval_target_length = 256
+  config.max_eval_target_length = 160
   # Maximum length cutoff for predicted tokens.
-  config.max_predict_length = 256
+  config.max_predict_length = 160
   # Inputs and targets share embedding.
   config.share_embeddings = True
 
@@ -112,7 +122,6 @@ def get_config():
   config.restore_checkpoints = True
   # Just do prediction from saved checkpoint.
   config.just_do_pred = True
-
   # Save a checkpoint every these number of steps.
   config.checkpoint_every_steps = 5_000
   # Frequency of eval during training, e.g. every 1000 steps.
