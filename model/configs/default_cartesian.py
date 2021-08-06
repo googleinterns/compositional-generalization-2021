@@ -25,31 +25,31 @@ def get_config():
   config.vocab_path = None
 
   # Vocabulary size if `vocab_path` is not given.
-  config.vocab_size = 26
+  config.vocab_size = 28
   config.max_corpus_chars = 10**7
 
-  # Name of cartesian dataset to use.
+  # Name of TFDS PCFG dataset to use.
   config.dataset_name = "cartesian_token_short_input"
-  config.train_split = "train"
+  config.train_split = "it_dec_train"
 
   # Optional name of cartesian dataset to use for evaluation.
   config.eval_dataset_name = None
-  config.eval_split = "test_easy"
-  config.predict_split = "test_easy"
+  config.eval_split = "it_dec_val_hard"
+  config.predict_split = "it_dec_test_hard"
 
   # Per device batch size for training.
   config.per_device_batch_size = 64
 
   # Beam size for inference.
-  config.beam_size = 4
+  config.beam_size = 1
 
-  config.num_train_steps = 5_000
+  config.num_train_steps = 4_000
 
   # Number of steps to take during evaluation.
-  config.num_eval_steps = 1
+  config.num_eval_steps = 5
   # Number of steps to generate predictions.
   # -1 will use the whole eval dataset.
-  config.num_predict_steps = 2
+  config.num_predict_steps = 1
   # Number of steps to take during evaluation of training set.
   config.num_eval_train_steps = 5
   # Number of steps to generate predictions on the training set.
@@ -59,14 +59,15 @@ def get_config():
   # Max prediction loops for prediction dataset.
   config.num_predict_loops = 1
   # Whether to use annotated number of operations to limit number of loops.
-  config.use_annotations = False
+  config.has_ops = True
+  config.use_annotations = True
   # Extra loops in addition to annotations.
   config.extra_loops = 0
   # Whether to copy input to prediction
-  config.copy_input = False
+  config.copy_input = True
   config.copy_input_in_full = False
   # Whether to copy previous output
-  config.copy_output = False
+  config.copy_output = True
 
   config.end_token = "[END]"
   config.in_out_token = "[SEP2]"
@@ -86,7 +87,7 @@ def get_config():
   config.weight_decay = 0.0
 
   # Maximum length cutoff for training examples.
-  config.max_target_length = 84
+  config.max_target_length = 160
   # Maximum length cutoff for eval examples.
   config.max_eval_target_length = 160
   # Maximum length cutoff for predicted tokens.
@@ -110,6 +111,16 @@ def get_config():
   # Number of attention heads.
   config.num_heads = 4
 
+  # Sinusoidal absolute positional encodings.
+  config.sinusoidal = False
+  # Relative radius
+  config.relative_radius = 8 # or 'None' for no relative attention
+  config.relative_bias = True
+  config.enc2dec = True
+  
+  # Copy decoder layers.
+  config.copy_decoder = False
+
   # Dropout rate.
   config.dropout_rate = 0.1
 
@@ -121,11 +132,11 @@ def get_config():
   # Whether to restore from existing model checkpoints.
   config.restore_checkpoints = True
   # Just do prediction from saved checkpoint.
-  config.just_do_pred = True
+  config.just_do_pred = False
   # Save a checkpoint every these number of steps.
-  config.checkpoint_every_steps = 5_000
+  config.checkpoint_every_steps = 2_000
   # Frequency of eval during training, e.g. every 1000 steps.
-  config.eval_every_steps = 1_250
+  config.eval_every_steps = 2_000
 
   # Use bfloat16 mixed precision training instead of float32.
   config.use_bfloat16 = True
