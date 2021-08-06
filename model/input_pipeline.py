@@ -1,4 +1,4 @@
-# Copyright 2021 The Flax Authors.
+# Copyright 2021 Google LLC.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -258,14 +258,15 @@ def _pack_with_tf_ops(dataset: tf.data.Dataset, keys: List[str],
 # Main dataset prep routines.
 # -----------------------------------------------------------------------------
 def preprocess_data(dataset,
-                        shuffle: bool,
-                        num_epochs: Optional[int] = 1,
-                        pack_examples: bool = True,
-                        shuffle_buffer_size: int = 1024,
-                        max_length: int = 512,
-                        batch_size: int = 256,
-                        drop_remainder: bool = True,
-                        prefetch_size: int = AUTOTUNE):
+                    shuffle: bool,
+                    num_epochs: Optional[int] = 1,
+                    pack_examples: bool = True,
+                    shuffle_buffer_size: int = 1024,
+                    max_length: int = 512,
+                    batch_size: int = 256,
+                    drop_remainder: bool = True,
+                    prefetch_size: int = AUTOTUNE,
+                    has_ops: bool = True):
   """Shuffle and batch/pack the given dataset."""
 
   def length_filter(max_len):
@@ -288,19 +289,32 @@ def preprocess_data(dataset,
     dataset = pack_dataset(dataset, max_length, keys = ["inputs", "targets"])
     dataset = dataset.batch(batch_size, drop_remainder=drop_remainder)
   else:  # simple (static-shape) padded batching
-    dataset = dataset.padded_batch(
-        batch_size,
-        padded_shapes={
-            'inputs': max_length,
-            'targets': max_length,
-            'op': ()
-        },
-        padding_values={
-            'inputs': 0,
-            'targets': 0,
-            'op': 0,
-        },
-        drop_remainder=drop_remainder)
+      if has_ops:
+        dataset = dataset.padded_batch(
+            batch_size,
+            padded_shapes={
+                'inputs': max_length,
+                'targets': max_length,
+                'op': ()
+            },
+            padding_values={
+                'inputs': 0,
+                'targets': 0,
+                'op': 0,
+            },
+            drop_remainder=drop_remainder)
+      else:
+          dataset = dataset.padded_batch(
+            batch_size,
+            padded_shapes={
+                'inputs': max_length,
+                'targets': max_length
+            },
+            padding_values={
+                'inputs': 0,
+                'targets': 0
+            },
+            drop_remainder=drop_remainder)
 
   if prefetch_size:
     dataset = dataset.prefetch(prefetch_size)
@@ -311,10 +325,11 @@ def preprocess_data(dataset,
 def get_datasets(config: ml_collections.ConfigDict,
                      *,
                      n_devices: int,
-                     vocab_path: Optional[str] = None):
+                     vocab_path: Optional[str] = None,
+                     has_ops: Optional[bool] = True):
   """Load and return dataset of batched examples for use during training."""
   if vocab_path is None:
-    vocab_path = os.path.expanduser("~/sentencepiece_model")
+    vocab_path = os.path.expanduser('~/sentencepiece_model')
 
   train_ds_builder = tfds.builder(config.dataset_name)
   
@@ -353,16 +368,18 @@ def get_datasets(config: ml_collections.ConfigDict,
       train_data,
       shuffle=True,
       num_epochs=None,
-      pack_examples=True,
+      pack_examples=False,
       batch_size=batch_size,
-      max_length=config.max_target_length)
+      max_length=config.max_target_length,
+      has_ops=has_ops)
       
   eval_train_ds = preprocess_data(
       train_data,
       shuffle=False,
       pack_examples=False,
       batch_size=batch_size,
-      max_length=config.max_eval_target_length)
+      max_length=config.max_eval_target_length,
+      has_ops=has_ops)
       
   predict_train_ds = preprocess_data(
       train_data,
@@ -370,14 +387,16 @@ def get_datasets(config: ml_collections.ConfigDict,
       pack_examples=False,
       batch_size=batch_size,
       max_length=config.max_predict_length,
-      drop_remainder=False)
+      drop_remainder=False,
+      has_ops=has_ops)
 
   eval_ds = preprocess_data(
       eval_data,
       shuffle=False,
       pack_examples=False,
       batch_size=batch_size,
-      max_length=config.max_eval_target_length)
+      max_length=config.max_eval_target_length,
+      has_ops=has_ops)
 
   predict_ds = preprocess_data(
       predict_data,
@@ -385,6 +404,7 @@ def get_datasets(config: ml_collections.ConfigDict,
       pack_examples=False,
       batch_size=batch_size,
       max_length=config.max_predict_length,
-      drop_remainder=False)
+      drop_remainder=False,
+      has_ops=has_ops)
 
   return train_ds, eval_train_ds, predict_train_ds, eval_ds, predict_ds, sp_tokenizer
