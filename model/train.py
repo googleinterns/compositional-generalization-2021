@@ -1,4 +1,4 @@
-# Copyright 2021 The Flax Authors.
+# Copyright 2021 Google LLC.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -285,7 +285,7 @@ def predict_step(inputs,
                  eos_id,
                  max_decode_len,
                  config,
-                 beam_size=4):
+                 beam_size=None):
   """Predicts translation with fast decoding beam search on a batch."""
   # Prepare transformer fast-decoder call for beam search: for beam search, we
   # need to set up our decoder model to handle a batch size equal to
@@ -326,7 +326,7 @@ def predict_step(inputs,
       cache,
       tokens_ids_to_logits,
       beam_size=beam_size,
-      alpha=0.6,
+      alpha=0,
       eos_id=eos_id,
       max_decode_len=max_decode_len)
 
@@ -564,7 +564,8 @@ def train_and_evaluate(config: ml_collections.ConfigDict, workdir: str):
   train_ds, eval_train_ds, predict_train_ds, eval_ds, predict_ds, encoder = input_pipeline.get_datasets(
       n_devices=jax.local_device_count(),
       config=config,
-      vocab_path=vocab_path)
+      vocab_path=vocab_path,
+      has_ops=config.has_ops)
 
   train_iter = iter(train_ds)
   vocab_size = int(encoder.vocab_size())
@@ -604,7 +605,12 @@ def train_and_evaluate(config: ml_collections.ConfigDict, workdir: str):
       deterministic=False,
       decode=False,
       kernel_init=nn.initializers.xavier_uniform(),
-      bias_init=nn.initializers.normal(stddev=1e-6))
+      bias_init=nn.initializers.normal(stddev=1e-6),
+      sinusoidal=config.sinusoidal,
+      relative_radius=config.relative_radius,
+      relative_bias=config.relative_bias,
+      enc2dec=config.enc2dec,
+      copy_decoder=config.copy_decoder)
   eval_config = train_config.replace(deterministic=True)
   predict_config = train_config.replace(deterministic=True, decode=True)
 
