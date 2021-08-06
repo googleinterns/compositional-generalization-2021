@@ -405,7 +405,7 @@ def decode_and_calculate_acc(*, p_pred_step, p_init_cache, target, config,
   """Processes the `predict_ds` and calculates the sentence accuracy from 
   decoded predictions."""
   
-  def concatenate_input(predicted):
+  def concatenate_input(this_input, concatenated_predicted, predicted):
     concatenated_input = []
     for i in range(n_devices):
         concatenated_input_2 = []
@@ -483,7 +483,8 @@ def decode_and_calculate_acc(*, p_pred_step, p_init_cache, target, config,
     count = 0
     while count < max_predict_loops - 1: 
         if copy_input:
-            concatenated_input = concatenate_input(predicted)
+            concatenated_input = concatenate_input(this_input, concatenated_predicted, 
+                                                   predicted) 
             predicted = jnp.array(concatenated_input)
             
         predicted = p_pred_step(predicted, target, cache, decode.EOS_ID,
@@ -529,7 +530,7 @@ def decode_and_calculate_acc(*, p_pred_step, p_init_cache, target, config,
                len(predictions), len(references), len(sources))
 
   # Calculate sentence accuracy for processed instructions against reference.
-  complete_matches = bleu.compute_complete_matches(references,predictions)
+  complete_matches = bleu.compute_complete_matches(references, predictions)
   all_complete_matches = per_host_sum_pmap(complete_matches)
   score = all_complete_matches[0] / all_complete_matches[1]
   # Save (wrongly predicted) samples for tensorboard.
