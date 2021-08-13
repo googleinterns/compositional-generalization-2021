@@ -61,12 +61,12 @@ class CfqMcd1ItDec(tfds.core.GeneratorBasedBuilder):
           source_path=extracted_path / 'train.src',
           target_path=extracted_path / 'train.tgt',
       ),
-      # val is the split used to check standard generalization to unseen data
+      # Val is the split used to check standard generalization to unseen data.
       'val': self._generate_examples(
           source_path=extracted_path / 'val.src',
           target_path=extracted_path / 'val.tgt',
       ),
-      # test is the split used to check iterative decoding generalization
+      # Test is the split used to check iterative decoding generalization.
       'test': self._generate_examples(
           source_path=extracted_path / 'test.src',
           target_path=extracted_path / 'test.tgt',
@@ -75,12 +75,12 @@ class CfqMcd1ItDec(tfds.core.GeneratorBasedBuilder):
           source_path=extracted_path / 'it_dec_train.src',
           target_path=extracted_path / 'it_dec_train.tgt',
       ),
-      # val is the split used to check standard generalization to unseen data
+      # Val is the split used to check standard generalization to unseen data.
       'it_dec_val': self._generate_examples(
           source_path=extracted_path / 'it_dec_val.src',
           target_path=extracted_path / 'it_dec_val.tgt',
       ),
-      # test is the split used to check iterative decoding generalization
+      # Test is the split used to check iterative decoding generalization.
       'it_dec_test': self._generate_examples(
           source_path=extracted_path / 'it_dec_test.src',
           target_path=extracted_path / 'it_dec_test.tgt',
