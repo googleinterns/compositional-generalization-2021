@@ -272,9 +272,9 @@ def main():
   generate_it_dec_data_files(examples_in, examples_out, 
                                data_path + "it_dec_val_easy.src",
                                data_path + "it_dec_val_easy.tgt")
-  examples_in = examples[2][0][limit_idx:]
-  examples_out = examples[2][1][limit_idx:]
-  it_dec_examples_in = examples[3][0][limit_idx:]
+  examples_in = examples[2][0]
+  examples_out = examples[2][1]
+  it_dec_examples_in = examples[3][0]
   out_file_ops_test = open(data_path + "it_dec_test_easy.ops", "w")
   for count in range(len(examples_out)):
       examples_out[count] = examples_out[count][:-1]
@@ -294,9 +294,9 @@ def main():
   generate_it_dec_data_files(examples_in, examples_out, 
                                data_path + "it_dec_val_hard.src",
                                data_path + "it_dec_val_hard.tgt")
-  examples_in = examples[4][0][limit_idx:]
-  examples_out = examples[4][1][limit_idx:]
-  it_dec_examples_in = examples[5][0][limit_idx:]
+  examples_in = examples[4][0]
+  examples_out = examples[4][1]
+  it_dec_examples_in = examples[5][0]
   out_file_ops_test = open(data_path + "it_dec_test_hard.ops", "w")
   for count in range(len(examples_out)):
       examples_out[count] = examples_out[count][:-1]
