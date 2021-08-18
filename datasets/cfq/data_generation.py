@@ -3,6 +3,7 @@
 
 import csv
 import numpy as np
+import random as rd
 
 import tensorflow.compat.v2 as tf
 import tensorflow_datasets as tfds
@@ -13,6 +14,11 @@ SEP_TOKEN = "[SEP]"
 IN_OUT_TOKEN = "[SEP2]"
 END_TOKEN = "[END]"
 END_ITER_TOKEN = "[ENDITER]"
+
+
+dict_of_args = {}
+for i in range(10):
+    dict_of_args["M" + str(i)] = ["M" + str(i)]
 
 
 def cfq_decompose_output(line):
@@ -153,31 +159,26 @@ def permute_clauses(question, query, csv_map, random=False):
     prefix = clauses[0]
     postfix = clauses[-1]
     clauses = clauses[1:-1]
-    remaining_clauses = len(clauses)
-    clause_ordering = -1 * np.ones(len(clauses))
     
+    if random:
+      rd.shuffle(clauses)
+      
     if csv_map is not None:
-      count = 0
-      for word in words:
+      ranking_list = []
+      for i, word in enumerate(words):
         if word in csv_map.keys():
-            for idx, clause in enumerate(clauses):
-                if csv_map[word] in clause and clause_ordering[idx] == -1:
-                   clause_ordering[idx] = count
-                   count += 1
-                   remaining_clauses -= 1
+            score = len(words) - i
+            this_ranking = np.zeros(len(clauses))
+            for j, clause in enumerate(clauses):
+                for value in csv_map[word]:
+                    if value + " " in clause and this_ranking[j] == 0:
+                        this_ranking[j] = score
+            ranking_list.append(this_ranking)
     
-    if remaining_clauses > 0:
-      perm_idx = np.arange(len(clauses) - remaining_clauses, len(clauses))
-      if random:
-        perm_idx = np.random.permutation(perm_idx)
-      count = 0
-      for idx in range(len(clauses)):
-        if clause_ordering[idx] == -1:
-            clause_ordering[idx] = perm_idx[count]
-            count += 1
-            
-    clause_ordering = list(clause_ordering.astype(int))
-    clauses = [clauses[i] for i in clause_ordering] 
+      ranking_array = np.array(ranking_list)
+      clause_ordering = np.argsort(-1 * np.sum(ranking_array, axis=0))
+      clauses = [clauses[i] for i in clause_ordering] 
+    
     for idx, clause in enumerate(clauses):
       if idx == len(clauses) - 1:
         if " ." in clause:
@@ -195,12 +196,14 @@ def generate_seq2seq_examples(ds, filename_in, filename_out, simplify_output=Fal
     
     csv_map = None
     if respect_question_order:
-      csv_map = {}
+      csv_map = dict(dict_of_args)
       with open("cfq_map.csv", mode="r") as csv_file:
         csv_reader = csv.reader(csv_file, delimiter=",")
         for row in csv_reader:
             if row[0] not in csv_map.keys():
-                csv_map[str(row[0])] = row[1]
+                csv_map[str(row[0])] = [str(row[1])]
+            else:
+                csv_map[str(row[0])].append(str(row[1]))
     
     for example in ds: 
       query = example["query"].numpy().decode("utf-8").strip()
@@ -233,22 +236,25 @@ def generate_it_dec_examples(ds, split, filename_in, filename_out, filename_ops=
         
     csv_map = None
     if respect_question_order:
-      csv_map ={}
+      csv_map = dict(dict_of_args)
       with open("cfq_map.csv", mode="r") as csv_file:
         csv_reader = csv.reader(csv_file, delimiter=",")
         for row in csv_reader:
             if row[0] not in csv_map.keys():
-                csv_map[str(row[0])] = row[1]
+                csv_map[str(row[0])] = [str(row[1])]
+            else:
+                csv_map[str(row[0])].append(str(row[1]))
     
     for example in ds: 
       query = example["query"].numpy().decode("utf-8").strip()
-      query = query.replace("\n", " ")
       if simplify_output:
+        query = query.replace("\n", " ")
         query = simplify_cfq_output(query)
         query = query.replace("{ ", "{\n")
         query = query.replace(". ", ".\n")
         query = query.replace(" }", "\n}")
       question = example["question"].numpy().decode("utf-8").strip()
+
       if permute:
         query = permute_clauses(question, query, csv_map, random)
       
@@ -299,36 +305,37 @@ def main():
     train_filename_in = "train.src"
     train_filename_out = "train.tgt"
     generate_seq2seq_examples(train_ds, train_filename_in, train_filename_out, 
-                             simplify_output=True, permute=True, 
-                             respect_question_order=True)
+                             simplify_output=False, permute=True, 
+                             respect_question_order=True, random=True)
     it_dec_train_filename_in = "it_dec_train.src"
     it_dec_train_filename_out = "it_dec_train.tgt"
     generate_it_dec_examples(train_ds, "train", it_dec_train_filename_in, 
-                             it_dec_train_filename_out, simplify_output=True, 
-                             permute=True, respect_question_order=True)
+                             it_dec_train_filename_out, simplify_output=False, 
+                             permute=True, respect_question_order=True, random=True)
     
     val_ds = tfds.load("cfq/mcd1", split="test[:10%]")
     val_filename_in = "val.src"
     val_filename_out = "val.tgt"
     generate_seq2seq_examples(val_ds, val_filename_in, val_filename_out,
-                              simplify_output=True)
+                              simplify_output=False, random=True)
     it_dec_val_filename_in = "it_dec_val.src"
     it_dec_val_filename_out = "it_dec_val.tgt"
     generate_it_dec_examples(val_ds, "val", it_dec_val_filename_in, it_dec_val_filename_out,
-                             simplify_output=True)
+                             simplify_output=False, random=True)
     
     test_ds = tfds.load("cfq/mcd1", split="test")
     test_filename_in = "test.src"
     test_filename_out = "test.tgt"
     generate_seq2seq_examples(test_ds, test_filename_in, test_filename_out, 
-                              simplify_output=True)
+                              simplify_output=False, random=True)
     it_dec_test_filename_in = "it_dec_test.src"
     it_dec_test_filename_out = "it_dec_test.tgt"
     it_dec_test_filename_ops = "it_dec_test.ops"
     generate_it_dec_examples(test_ds, "test", it_dec_test_filename_in, it_dec_test_filename_out, 
-                             it_dec_test_filename_ops, simplify_output=True)
+                             it_dec_test_filename_ops, simplify_output=False, random=True)
                            
                              
 if __name__ == '__main__':
     main()
         
+  
