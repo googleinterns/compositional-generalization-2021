@@ -49,7 +49,7 @@ def get_config():
   config.num_eval_steps = 5
   # Number of steps to generate predictions.
   # -1 will use the whole eval dataset.
-  config.num_predict_steps = 1
+  config.num_predict_steps = -1
   # Number of steps to take during evaluation of training set.
   config.num_eval_train_steps = 5
   # Number of steps to generate predictions on the training set.
