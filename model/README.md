@@ -1,31 +1,26 @@
-## Machine Translation
+## Iterative Decoding
 
-Trains a Transformer-based model (Vaswani *et al.*, 2017) on the WMT Machine
-Translation en-de dataset.
+Trains a Transformer-based model (Vaswani *et al.*, 2017) on:
+* The PCFG dataset (productivity and systematicity splits)
+* The cartesian product dataset
+* The MCD1 split of the CFQ dataset
 
 This example uses linear learning rate warmup and inverse square root learning
 rate schedule.
 
 ### Requirements
 
-*   TensorFlow datasets `wmt17_translate/de-en` and `wmt14_translate/de-en` need
-    to be downloaded and prepared. A sentencepiece tokenizer vocabulary will be
+*   The TensorFlow datasets for each of the above datasets need
+    to be generated and prepared. See the README.md files in the datasets/ 
+    folder for instructions specific to each dataset.
+    A sentencepiece tokenizer vocabulary will be
     automatically generated and saved on each training run.
 *   This example additionally depends on the `sentencepiece` and
     `tensorflow-text` packages.
 
-### Supported setups
-
-The model should run with other configurations and hardware, but was explicitly
-tested on the following.
-
-Hardware | Batch size | Training time | BLEU  | TensorBoard.dev
--------- | ---------- | ------------- | ----- | ---------------
-TPU v3-8 | 256        | 1h 35m        | 25.13 | [2020-04-21](https://tensorboard.dev/experiment/9lsbEw7DQzKdv881v4nIQA/)
-
 ### How to run
 
-`python main.py --workdir=./wmt_256 --config=configs/default.py --config.reverse_translation=True`
+`python main.py --workdir=./$DIR_NAME$ --config=configs/$CONFIG_FILE_NAME$.py`
 
 ### How to run on Cloud TPUs
 
@@ -84,18 +79,3 @@ Then, if your TPU is at IP `192.168.0.2`: `python main.py --workdir=./wmt_256
 
 A tensorboard instance can then be launched and viewed on your local 2222 port
 via the tunnel: `tensorboard --logdir wmt_256 --port 8888`
-
-### Downloading the WMT Datasets
-
-We recommend downloading and preparing the TFDS datasets beforehand. For Cloud
-TPUs, we recommend using a cheap standard instance and saving the prepared TFDS
-data on a storage bucket, from where it can be loaded directly. Set the
-`TFDS_DATA_DIR` to your storage bucket path (`gs://<bucket name>`).
-
-You can download and prepare any of the WMT datasets using TFDS directly:
-`python -m tensorflow_datasets.scripts.download_and_prepare
---datasets=wmt17_translate/de-en`
-
-The typical academic BLEU evaluation also uses the WMT 2014 Test set: `python -m
-tensorflow_datasets.scripts.download_and_prepare
---datasets=wmt14_translate/de-en`
