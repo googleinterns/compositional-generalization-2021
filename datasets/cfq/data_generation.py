@@ -18,7 +18,7 @@ END_ITER_TOKEN = "[ENDITER]"
 
 dict_of_args = {}
 for i in range(10):
-    dict_of_args["M" + str(i)] = ["M" + str(i)]
+  dict_of_args["M" + str(i)] = ["M" + str(i)]
 
 
 def cfq_decompose_output(line):
@@ -120,11 +120,11 @@ def simplify_cfq_output(output):
   clause.
 
   Args:
-      output: string corresponding to the CFQ query (output).  The clauses
-        should be separated with spaces (" ").
+    output: string corresponding to the CFQ query (output).  The clauses
+      should be separated with spaces (" ").
 
   Returns:
-      A modified SPARQL query with aggregated cartesian products.
+    A modified SPARQL query with aggregated cartesian products.
 
   """
   prefix, triplets, postfix = cfq_decompose_output(output)
@@ -134,208 +134,207 @@ def simplify_cfq_output(output):
 
 
 def permute_clauses(question, query, csv_map, random=False):
-    """Permutes CFQ query clauses.
+  """Permutes CFQ query clauses.
 
-    Permutes clauses according to the order of the words in the question, and 
-    according to the word-SPARQL command dictionary loaded in csv_map. 
+  Permutes clauses according to the order of the words in the question, and 
+  according to the word-SPARQL command dictionary loaded in csv_map. 
 
-    Args:
-        question: A string corresponding to the CFQ question (input).
-        query: A string corresponding to the CFQ query (output). The clauses
-          should be separated with line breaks ("\n").
-        csv_map: Optional; Dictionary connecting question words to their
-          corresponding SPARQL query commands.
-        random: Optional; boolean indicating whether to permute the remaining 
-          clauses (which haven't been ordered according to word order and csv_map)
-          at random.
+  Args:
+    question: A string corresponding to the CFQ question (input).
+      query: A string corresponding to the CFQ query (output). The clauses
+      should be separated with line breaks ("\n").
+    csv_map: Optional; Dictionary connecting question words to their
+      corresponding SPARQL query commands.
+    random: Optional; boolean indicating whether to permute the remaining 
+      clauses (which haven't been ordered according to word order and csv_map)
+      at random.
 
-    Returns:
-        A modified SPARQL query ordered according to the word order in question
-          and csv_map.
+  Returns:
+    A modified SPARQL query ordered according to the word order in question
+      and csv_map.
 
-    """
-    words = question.split(" ")
-    clauses = query.split("\n")
-    prefix = clauses[0]
-    postfix = clauses[-1]
-    clauses = clauses[1:-1]
+  """
+  words = question.split(" ")
+  clauses = query.split("\n")
+  prefix = clauses[0]
+  postfix = clauses[-1]
+  clauses = clauses[1:-1]
     
-    if random:
-      rd.shuffle(clauses)
-      
-    if csv_map is not None:
-      ranking_list = []
-      for i, word in enumerate(words):
-        if word in csv_map.keys():
-            score = len(words) - i
-            this_ranking = np.zeros(len(clauses))
-            for j, clause in enumerate(clauses):
-                for value in csv_map[word]:
-                    if value + " " in clause and this_ranking[j] == 0:
-                        this_ranking[j] = score
-            ranking_list.append(this_ranking)
+  if random:
+    rd.shuffle(clauses)
     
-      ranking_array = np.array(ranking_list)
-      clause_ordering = np.argsort(-1 * np.sum(ranking_array, axis=0))
-      clauses = [clauses[i] for i in clause_ordering] 
+  if csv_map is not None:
+    ranking_list = []
+    for i, word in enumerate(words):
+      if word in csv_map.keys():
+        score = len(words) - i
+        this_ranking = np.zeros(len(clauses))
+        for j, clause in enumerate(clauses):
+          for value in csv_map[word]:
+            if value + " " in clause and this_ranking[j] == 0:
+              this_ranking[j] = score
+        ranking_list.append(this_ranking)
     
-    for idx, clause in enumerate(clauses):
-      if idx == len(clauses) - 1:
-        if " ." in clause:
-            clauses[idx] = clause.replace(" .", "")  
-      elif " ." not in clause:
-        clauses[idx] += " ."
-    out_list = [prefix] + clauses + [postfix]
-    return "\n".join(out_list)
+    ranking_array = np.array(ranking_list)
+    clause_ordering = np.argsort(-1 * np.sum(ranking_array, axis=0))
+    clauses = [clauses[i] for i in clause_ordering] 
+    
+  for idx, clause in enumerate(clauses):
+    if idx == len(clauses) - 1:
+      if " ." in clause:
+        clauses[idx] = clause.replace(" .", "")  
+    elif " ." not in clause:
+      clauses[idx] += " ."
+  out_list = [prefix] + clauses + [postfix]
+  return "\n".join(out_list)
       
 
 def generate_seq2seq_examples(ds, filename_in, filename_out, simplify_output=False,
                               permute=False, respect_question_order=False, random=False):
-    input_file = open(filename_in, "w")
-    output_file = open(filename_out, "w")
+  input_file = open(filename_in, "w")
+  output_file = open(filename_out, "w")
     
-    csv_map = None
-    if respect_question_order:
-      csv_map = dict(dict_of_args)
-      with open("cfq_map.csv", mode="r") as csv_file:
-        csv_reader = csv.reader(csv_file, delimiter=",")
-        for row in csv_reader:
-            if row[0] not in csv_map.keys():
-                csv_map[str(row[0])] = [str(row[1])]
-            else:
-                csv_map[str(row[0])].append(str(row[1]))
+  csv_map = None
+  if respect_question_order:
+    csv_map = dict(dict_of_args)
+    with open("cfq_map.csv", mode="r") as csv_file:
+      csv_reader = csv.reader(csv_file, delimiter=",")
+      for row in csv_reader:
+        if row[0] not in csv_map.keys():
+          csv_map[str(row[0])] = [str(row[1])]
+        else:
+          csv_map[str(row[0])].append(str(row[1]))
     
-    for example in ds: 
-      query = example["query"].numpy().decode("utf-8").strip()
+  for example in ds: 
+    query = example["query"].numpy().decode("utf-8").strip()
+    query = query.replace("\n", " ")
+    if simplify_output:
+      query = simplify_cfq_output(query)
+    question = example["question"].numpy().decode("utf-8").strip()
+    if permute:
+      query = query.replace("{ ", "{\n")
+      query = query.replace(". ", ".\n")
+      query = query.replace(" }", "\n}")
+      query = permute_clauses(question, query, csv_map, random)
       query = query.replace("\n", " ")
-      if simplify_output:
-        query = simplify_cfq_output(query)
-      question = example["question"].numpy().decode("utf-8").strip()
-      if permute:
-        query = query.replace("{ ", "{\n")
-        query = query.replace(". ", ".\n")
-        query = query.replace(" }", "\n}")
-        query = permute_clauses(question, query, csv_map, random)
-        query = query.replace("\n", " ")
       
-      input_file.write(question.strip("\n") + "\n")
-      output_file.write(query.strip("\n") + "\n")
+    input_file.write(question.strip("\n") + "\n")
+    output_file.write(query.strip("\n") + "\n")
     
-    input_file.close()
-    output_file.close()
+  input_file.close()
+  output_file.close()
 
 
 def generate_it_dec_examples(ds, split, filename_in, filename_out, filename_ops=None, 
                              short_input=False, short_output=True,
                              simplify_output=False, permute=False, 
                              respect_question_order=False, random=False):
-    input_file = open(filename_in, "w")
-    output_file = open(filename_out, "w")
-    if filename_ops is not None:
-        ops_file = open(filename_ops, "w")
+  input_file = open(filename_in, "w")
+  output_file = open(filename_out, "w")
+  if filename_ops is not None:
+    ops_file = open(filename_ops, "w")
         
-    csv_map = None
-    if respect_question_order:
-      csv_map = dict(dict_of_args)
-      with open("cfq_map.csv", mode="r") as csv_file:
-        csv_reader = csv.reader(csv_file, delimiter=",")
-        for row in csv_reader:
-            if row[0] not in csv_map.keys():
-                csv_map[str(row[0])] = [str(row[1])]
-            else:
-                csv_map[str(row[0])].append(str(row[1]))
+  csv_map = None
+  if respect_question_order:
+    csv_map = dict(dict_of_args)
+    with open("cfq_map.csv", mode="r") as csv_file:
+      csv_reader = csv.reader(csv_file, delimiter=",")
+      for row in csv_reader:
+        if row[0] not in csv_map.keys():
+          csv_map[str(row[0])] = [str(row[1])]
+        else:
+          csv_map[str(row[0])].append(str(row[1]))
     
-    for example in ds: 
-      query = example["query"].numpy().decode("utf-8").strip()
-      if simplify_output:
-        query = query.replace("\n", " ")
-        query = simplify_cfq_output(query)
-        query = query.replace("{ ", "{\n")
-        query = query.replace(". ", ".\n")
-        query = query.replace(" }", "\n}")
-      question = example["question"].numpy().decode("utf-8").strip()
+  for example in ds: 
+    query = example["query"].numpy().decode("utf-8").strip()
+    if simplify_output:
+      query = query.replace("\n", " ")
+      query = simplify_cfq_output(query)
+      query = query.replace("{ ", "{\n")
+      query = query.replace(". ", ".\n")
+      query = query.replace(" }", "\n}")
+    question = example["question"].numpy().decode("utf-8").strip()
 
-      if permute:
-        query = permute_clauses(question, query, csv_map, random)
+    if permute:
+      query = permute_clauses(question, query, csv_map, random)
       
-      list_of_outputs = query.split("\n")
-      if filename_ops is not None:
-        ops_file.write(str(len(list_of_outputs)) + "\n")
-      
-      cur_input = question + " " + END_TOKEN
-      for i, partial_output in enumerate(list_of_outputs):
-        if "test" not in split or i == 0:
-            input_file.write(START_TOKEN + " " + cur_input + "\n")
-        
-        if i == 0:
-            cur_output = partial_output
-            final_output = cur_output + " " + END_TOKEN
-        else:
-            cur_output += " " + SEP_TOKEN + " " + partial_output 
-            if not short_output:
-                final_output = cur_output + " " + END_TOKEN
-            else:
-                final_output = partial_output + " " + END_TOKEN
-            if i == len(list_of_outputs) - 1:
-                final_output = final_output.replace(END_TOKEN, END_ITER_TOKEN)
-                final_output += " " + END_TOKEN
-        
-        if "test" not in split:        
-            output_file.write(START_TOKEN + " " + final_output + "\n")
-        
-        cur_input = question + " " + IN_OUT_TOKEN 
-        if short_input:
-            cur_input += " " + partial_output + " " + END_TOKEN
-        else:
-            cur_input += " " + cur_output + " " + END_TOKEN
-      
-      if "test" in split:
-        final_output = START_TOKEN + " " + cur_output 
-        final_output += " " + END_ITER_TOKEN + " " + END_TOKEN 
-        output_file.write(final_output + "\n")
-    
-    input_file.close()
-    output_file.close()
+    list_of_outputs = query.split("\n")
     if filename_ops is not None:
-        ops_file.close()
+      ops_file.write(str(len(list_of_outputs)) + "\n")
+      
+    cur_input = question + " " + END_TOKEN
+    for i, partial_output in enumerate(list_of_outputs):
+      if "test" not in split or i == 0:
+        input_file.write(START_TOKEN + " " + cur_input + "\n")
+        
+      if i == 0:
+        cur_output = partial_output
+        final_output = cur_output + " " + END_TOKEN
+      else:
+        cur_output += " " + SEP_TOKEN + " " + partial_output 
+        if not short_output:
+          final_output = cur_output + " " + END_TOKEN
+        else:
+          final_output = partial_output + " " + END_TOKEN
+        if i == len(list_of_outputs) - 1:
+          final_output = final_output.replace(END_TOKEN, END_ITER_TOKEN)
+          final_output += " " + END_TOKEN
+        
+      if "test" not in split:        
+        output_file.write(START_TOKEN + " " + final_output + "\n")
+        
+      cur_input = question + " " + IN_OUT_TOKEN 
+      if short_input:
+        cur_input += " " + partial_output + " " + END_TOKEN
+      else:
+        cur_input += " " + cur_output + " " + END_TOKEN
+      
+    if "test" in split:
+      final_output = START_TOKEN + " " + cur_output 
+      final_output += " " + END_ITER_TOKEN + " " + END_TOKEN 
+      output_file.write(final_output + "\n")
+    
+  input_file.close()
+  output_file.close()
+  if filename_ops is not None:
+    ops_file.close()
 
 
 def main():        
-    train_ds = tfds.load("cfq/mcd1", split="train")
-    train_filename_in = "train.src"
-    train_filename_out = "train.tgt"
-    generate_seq2seq_examples(train_ds, train_filename_in, train_filename_out, 
-                             simplify_output=False, permute=True, 
-                             respect_question_order=True, random=True)
-    it_dec_train_filename_in = "it_dec_train.src"
-    it_dec_train_filename_out = "it_dec_train.tgt"
-    generate_it_dec_examples(train_ds, "train", it_dec_train_filename_in, 
-                             it_dec_train_filename_out, simplify_output=False, 
-                             permute=True, respect_question_order=True, random=True)
-    
-    val_ds = tfds.load("cfq/mcd1", split="test[:10%]")
-    val_filename_in = "val.src"
-    val_filename_out = "val.tgt"
-    generate_seq2seq_examples(val_ds, val_filename_in, val_filename_out,
-                              simplify_output=False, random=True)
-    it_dec_val_filename_in = "it_dec_val.src"
-    it_dec_val_filename_out = "it_dec_val.tgt"
-    generate_it_dec_examples(val_ds, "val", it_dec_val_filename_in, it_dec_val_filename_out,
-                             simplify_output=False, random=True)
-    
-    test_ds = tfds.load("cfq/mcd1", split="test")
-    test_filename_in = "test.src"
-    test_filename_out = "test.tgt"
-    generate_seq2seq_examples(test_ds, test_filename_in, test_filename_out, 
-                              simplify_output=False, random=True)
-    it_dec_test_filename_in = "it_dec_test.src"
-    it_dec_test_filename_out = "it_dec_test.tgt"
-    it_dec_test_filename_ops = "it_dec_test.ops"
-    generate_it_dec_examples(test_ds, "test", it_dec_test_filename_in, it_dec_test_filename_out, 
-                             it_dec_test_filename_ops, simplify_output=False, random=True)
+  train_ds = tfds.load("cfq/mcd1", split="train")
+  train_filename_in = "train.src"
+  train_filename_out = "train.tgt"
+  generate_seq2seq_examples(train_ds, train_filename_in, train_filename_out, 
+                            simplify_output=False, permute=True, 
+                            respect_question_order=True, random=True)
+  it_dec_train_filename_in = "it_dec_train.src"
+  it_dec_train_filename_out = "it_dec_train.tgt"
+  generate_it_dec_examples(train_ds, "train", it_dec_train_filename_in, 
+                           it_dec_train_filename_out, simplify_output=False, 
+                          permute=True, respect_question_order=True, random=True)
+
+  val_ds = tfds.load("cfq/mcd1", split="test[:10%]")
+  val_filename_in = "val.src"
+  val_filename_out = "val.tgt"
+  generate_seq2seq_examples(val_ds, val_filename_in, val_filename_out,
+                            simplify_output=False, random=True)
+  it_dec_val_filename_in = "it_dec_val.src"
+  it_dec_val_filename_out = "it_dec_val.tgt"
+  generate_it_dec_examples(val_ds, "val", it_dec_val_filename_in, it_dec_val_filename_out,
+                           simplify_output=False, random=True)
+
+  test_ds = tfds.load("cfq/mcd1", split="test")
+  test_filename_in = "test.src"
+  test_filename_out = "test.tgt"
+  generate_seq2seq_examples(test_ds, test_filename_in, test_filename_out, 
+                            simplify_output=False, random=True)
+  it_dec_test_filename_in = "it_dec_test.src"
+  it_dec_test_filename_out = "it_dec_test.tgt"
+  it_dec_test_filename_ops = "it_dec_test.ops"
+  generate_it_dec_examples(test_ds, "test", it_dec_test_filename_in, it_dec_test_filename_out, 
+                           it_dec_test_filename_ops, simplify_output=False, random=True)
                            
                              
 if __name__ == "__main__":
-    main()
+  main()
         
-  
