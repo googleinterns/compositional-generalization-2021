@@ -161,6 +161,10 @@ def main():
         for i in range(len(int_tasks) - 1):
           out_file_src_validation.write(int_tasks[i] + '\n')
           out_file_tgt_validation.write(int_tasks[i + 1] + '\n')
+        out_file_src_test.write(in_line)
+        out_file_tgt_test.write(out_line.strip('\n') + ' END\n')
+        _ , nb_ops = generate_intermediate_tasks(in_line.strip('\n'), out_line.strip('\n'))
+        out_file_ops_test.write(str(nb_ops) + '\n')
       else:
         out_file_src_test.write(in_line)
         out_file_tgt_test.write(out_line.strip('\n') + ' END\n')
