@@ -39,7 +39,7 @@ class Cartesian(tfds.core.GeneratorBasedBuilder):
           'op': tf.int32,
         }),
         supervised_keys=('source', 'target'), 
-        disable_shuffling=True,
+        disable_shuffling=False,
         homepage='',
         citation=_CITATION,
     )
