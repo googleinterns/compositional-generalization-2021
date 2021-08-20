@@ -91,7 +91,7 @@ def cfq_merge_cartesians(triplets):
   if not triplets:
     return triplets
   triplet = triplets[0]
-  if triplet[0]== "(":
+  if triplet[0] == "(":
     tokens = triplet.split(" ) ( ")
     if len(tokens) == 3:
       to_keep = []
