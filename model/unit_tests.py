@@ -2,9 +2,9 @@
 """
 
 from absl.testing import parameterized
+import jax.numpy as jnp
 import numpy as np
 import tensorflow as tf
-import jax.numpy as jnp
 
 from models import create_relative_ids
 
@@ -12,7 +12,7 @@ from models import create_relative_ids
 class UnitTest(tf.test.TestCase, parameterized.TestCase):
 
   def test_make_relative_ids_enc_only(self):
-    enc_relative_ids =  create_relative_ids(in_length=6, relative_radius=3)
+    enc_relative_ids = create_relative_ids(in_length=6, relative_radius=3)
 
     expected = jnp.array([
         [3, 2, 1, 0, 0, 0],  #
