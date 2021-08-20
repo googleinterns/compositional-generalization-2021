@@ -335,7 +335,7 @@ def main():
                              it_dec_test_filename_ops, simplify_output=False, random=True)
                            
                              
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
         
   
